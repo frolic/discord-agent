@@ -1,0 +1,192 @@
+# Operating
+
+## Agent home layout
+
+The agent home is the cwd you launch the bot from (or whatever you point
+`PI_CODING_AGENT_DIR` at). It's both *your* home for this bot and pi's
+`agentDir` — pi reads its own configuration from the same place.
+
+```
+<agent-home>/
+  # secrets + harness env (gitignored)
+  .env
+
+  # bot identity (tracked)
+  SYSTEM.md                           # pi-native; auto-discovered as the system prompt
+  AGENTS.md                           # pi-native; loaded as project context
+  skills/                             # pi-format skills, auto-loaded
+
+  # pi config (tracked, all optional — pi has working defaults)
+  settings.json                       # defaultProvider/Model/ThinkingLevel, compaction, retry, skills paths, etc.
+  models.json                         # custom model definitions / overrides
+
+  # service template (tracked)
+  discord-agent.service               # systemd template
+
+  # runtime state (gitignored)
+  auth.json                           # pi's credential store (created by pi if a user runs `/login`)
+  sessions/<channelId>.jsonl          # one file per Discord channel/thread
+  workspaces/<channelId>/             # agent's cwd for that channel
+  active.json                         # per-channel work-state for restart recovery
+```
+
+Threads share the structure with channels — Discord treats a thread as a
+distinct channel ID, so `sessions/<threadId>.jsonl` and
+`workspaces/<threadId>/` get created naturally on first message.
+
+The `session.jsonl` files are pi's native format. You can resume any
+conversation from your terminal with `pi --session <path>`, useful for
+debugging or continuing a chat outside Discord.
+
+To run multiple agents from the same framework, repeat with a separate
+home dir per bot.
+
+## Environment
+
+Four env vars; everything else lives in `settings.json` (pi-native).
+
+| Variable | Required? | What it is |
+|---|---|---|
+| `DISCORD_TOKEN` | required | Bot token from the Discord developer portal |
+| `<PROVIDER>_API_KEY` | required | API key — pi resolves the provider from whichever `*_API_KEY` is set (e.g., `OPENROUTER_API_KEY` → OpenRouter) |
+| `DEBUG_CHANNEL_ID` | optional | Discord channel ID to cross-post operational logs (tool calls, per-call usage, compaction, lifecycle) |
+| `PI_CODING_AGENT_DIR` | optional | Override `agentDir` if cwd is awkward for your deployment. Default: cwd. |
+
+**Cloud-host workaround.** Discord blocks some cloud IP ranges (notably
+AWS) at `discord.com`. If the bot can't connect from a hosted VM, set
+`DISCORD_API_URL=https://canary.discord.com/api` in your `.env` to route
+REST and gateway traffic through the canary domain instead.
+
+**Multiple API keys in env?** Set `defaultProvider` (and optionally
+`defaultModel`) in `settings.json` to disambiguate, or just keep one
+`*_API_KEY` and pi picks that provider automatically.
+
+## Pi configuration (`settings.json`)
+
+Tune the model, compaction, retry, skills paths, themes, and more via
+`<agent-home>/settings.json`. Full reference:
+[pi-coding-agent settings docs](https://github.com/badlogic/pi-mono/blob/v0.72.1/packages/coding-agent/docs/settings.md).
+
+Common knobs:
+
+```json
+{
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-sonnet-4-6",
+  "defaultThinkingLevel": "medium",
+  "compaction": {
+    "enabled": true,
+    "keepRecentTokens": 30000
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 3
+  }
+}
+```
+
+Pi works with sensible defaults if `settings.json` doesn't exist — only
+add it when you want to deviate.
+
+To verify which model the bot resolved at runtime, check the bot's
+Discord presence — its activity status displays `<provider>/<model-id>`
+(e.g., "Playing anthropic/claude-sonnet-4-6") in the member list once
+the first session opens.
+
+## Custom models (`models.json`)
+
+For self-hosted endpoints (vLLM, Ollama, custom OpenAI-compatible) or
+overriding pricing/context-window metadata on built-in models, drop a
+`models.json` next to `settings.json`. Format and override semantics are
+pi-native — see the [pi-coding-agent docs](https://github.com/badlogic/pi-mono/tree/v0.72.1/packages/coding-agent/docs).
+
+## Running long-term with systemd
+
+A template ships at
+[`../example-agent/discord-agent.service`](../example-agent/discord-agent.service).
+Copy, replace the `$USER`, `$AGENT_HOME`, `$SOURCE_DIR` placeholders, drop
+into `/etc/systemd/system/`, then:
+
+```bash
+sudo cp ~/discord-agent/example-agent/discord-agent.service /etc/systemd/system/<your-bot>.service
+sudo $EDITOR /etc/systemd/system/<your-bot>.service     # replace $USER / $AGENT_HOME / $SOURCE_DIR
+sudo systemctl daemon-reload
+sudo systemctl enable --now <your-bot>
+journalctl -u <your-bot> -f                              # tail logs
+```
+
+Three things in the template that matter for self-restarting agents:
+
+- **`StartLimitIntervalSec=0`** disables systemd's restart rate limit. By
+  default, systemd marks a service `failed` after 5 restarts in 10s. Tight
+  self-edit loops trip this fast and the bot stops coming back until you
+  `systemctl reset-failed`.
+- **`Restart=always`** restarts on any exit *including* clean
+  `process.exit(0)` — which is what the agent calls when self-restarting.
+  `Restart=on-failure` would only respawn on non-zero exits.
+- **`ReadWritePaths`** lists both the agent home (sessions, workspaces)
+  AND the framework source repo, so the agent can edit its own code under
+  the hardening profile.
+
+## Self-modification
+
+When running from source, the harness tells the agent where its own
+framework code lives (the absolute path to the cloned repo) via an extra
+section appended to the system prompt. The agent can then `read`/`edit`/
+`write`/`bash` against framework files just like any other file, and call
+**`restart_self`** to relaunch with the new code.
+
+The flow:
+
+1. Agent edits framework source (e.g., `src/io/installTypingIndicator.ts`).
+2. Agent calls `send({ text: "Restarting to apply edits.", more: true })` so the user sees what's happening.
+3. Agent calls `restart_self({ reason: "tweaked typing-indicator timing" })`.
+4. Bot exits cleanly. Supervisor respawns with the new code. Bun reads
+   the source fresh; no module cache to reload.
+
+When running from a **compiled binary**, the system-prompt addendum is
+not added (the source isn't reachable from inside the binary). The
+`restart_self` tool still works, but only as a recovery hatch — there's
+no "new source" for it to pick up. Update by replacing the binary, then
+restart.
+
+Detection happens at module-import time via `process.env.COMPILED`,
+which the build scripts bake into binaries (`COMPILED=true bun build
+--env=COMPILED* …`). In source mode, `COMPILED` is undefined.
+
+For the user, `!restart` does the same thing as `restart_self` — exits
+the process so the supervisor respawns. Useful when state is stuck or
+after pulling fresh code without involving the agent.
+
+## Building binaries (optional)
+
+For deployments where you'd rather not have Bun on the host, you can
+compile a self-contained binary via `bun build --compile`. The Bun runtime
+gets embedded; the output has no Bun-on-host dependency.
+
+**Trade-off worth knowing before you build.** Running from source lets
+the agent edit its own framework code and `restart_self` to pick up the
+new version (see [Self-modification](#self-modification) above). A
+compiled binary is more portable but loses that loop — the framework
+source isn't reachable from inside the binary, so the harness omits the
+self-mod addendum from the system prompt and the agent treats its own
+code as read-only. Pick source for development and self-modifying
+agents; pick binary for "ship it and forget it" deployments.
+
+```bash
+cd ~/discord-agent
+bun run build              # current platform → dist/discord-agent
+bun run build:all          # cross-compile linux + darwin x64/arm64
+```
+
+Build targets:
+
+| Script | Target | Output |
+|---|---|---|
+| `build:linux-x64` | bun-linux-x64 | `dist/discord-agent-linux-x64` |
+| `build:linux-arm64` | bun-linux-arm64 | `dist/discord-agent-linux-arm64` |
+| `build:darwin-x64` | bun-darwin-x64 | `dist/discord-agent-darwin-x64` |
+| `build:darwin-arm64` | bun-darwin-arm64 | `dist/discord-agent-darwin-arm64` |
+
+Each output is ~70 MB (Bun runtime + bundled JS). Ship as a single
+executable from a stable cwd that has its own `.env` and persona files.

@@ -1,0 +1,32 @@
+{
+  "name": "discord-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord harness for pi agents — one warm AgentSession per channel/thread, all state in your agent-home directory (which is also pi's agentDir).",
+  "bin": {
+    "discord-agent": "src/bin/agent.ts"
+  },
+  "scripts": {
+    "dev": "bun --watch src/bin/agent.ts",
+    "start": "bun src/bin/agent.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "COMPILED=true bun build --compile --env=COMPILED* --outfile dist/discord-agent src/bin/agent.ts",
+    "build:linux-x64": "COMPILED=true bun build --compile --env=COMPILED* --target=bun-linux-x64 --outfile dist/discord-agent-linux-x64 src/bin/agent.ts",
+    "build:linux-arm64": "COMPILED=true bun build --compile --env=COMPILED* --target=bun-linux-arm64 --outfile dist/discord-agent-linux-arm64 src/bin/agent.ts",
+    "build:darwin-x64": "COMPILED=true bun build --compile --env=COMPILED* --target=bun-darwin-x64 --outfile dist/discord-agent-darwin-x64 src/bin/agent.ts",
+    "build:darwin-arm64": "COMPILED=true bun build --compile --env=COMPILED* --target=bun-darwin-arm64 --outfile dist/discord-agent-darwin-arm64 src/bin/agent.ts",
+    "build:all": "rm -rf dist && bun run build:linux-x64 && bun run build:linux-arm64 && bun run build:darwin-x64 && bun run build:darwin-arm64"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.3.0",
+    "@mariozechner/pi-agent-core": "^0.72.1",
+    "@mariozechner/pi-ai": "^0.72.1",
+    "@mariozechner/pi-coding-agent": "^0.72.1",
+    "discord.js": "^14.16.3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

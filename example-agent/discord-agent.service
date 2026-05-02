@@ -1,0 +1,46 @@
+# Example systemd service for discord-agent.
+#
+# Copy to /etc/systemd/system/<your-bot-name>.service, replace the
+# `$USER`, `$AGENT_HOME`, `$SOURCE_DIR` placeholders for your environment,
+# then:
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now <your-bot-name>
+#   journalctl -u <your-bot-name> -f
+#
+# `StartLimitIntervalSec=0` disables systemd's restart rate limit. With the
+# default (5 restarts in 10s) systemd marks the service failed and refuses
+# to bring it back — a real foot-gun if the agent ever self-restarts in
+# quick succession (e.g., a tight self-edit loop). Disable it.
+#
+# `Restart=always` restarts on any exit including clean `process.exit(0)`,
+# which is what the agent calls when self-restarting.
+
+[Unit]
+Description=discord-agent
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=/home/$USER/$AGENT_HOME
+EnvironmentFile=/home/$USER/$AGENT_HOME/.env
+ExecStart=/home/$USER/.bun/bin/bun /home/$USER/$SOURCE_DIR/src/bin/agent.ts
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Two write paths: agent home (sessions, workspaces) AND source repo (so
+# the agent can edit its own framework code via bash/edit/write).
+ReadWritePaths=/home/$USER/$AGENT_HOME /home/$USER/$SOURCE_DIR
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
