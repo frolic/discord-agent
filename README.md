@@ -18,6 +18,13 @@ any number of agents.
 
 ## Quick start
 
+Easiest path is hosted: sign up at [exe.dev](https://exe.dev), spin up
+a VM, and link it to this repo — Shelley walks you through setup and
+can help debug. Same path works for any other harness or piece of
+software you want a place to run.
+
+To set up by hand, the three steps below.
+
 ### 1. Set up the agent home
 
 ```bash

@@ -1,5 +1,18 @@
 # Operating
 
+## Recommended host
+
+A small VPS or VM dedicated to the bot is the recommended home. Two
+reasons: it keeps the agent reachable around the clock (laptops sleep,
+networks change), and it contains the blast radius of the agent's
+`bash` / `write` / `edit` tools to an environment that doesn't share
+your personal `~/`, ssh keys, or other credentials. The agent's tool
+surface assumes a trusted home; "trusted" reads better when the home
+is dedicated.
+
+A laptop is fine for development. For anything long-lived or shared,
+give the agent its own host.
+
 ## Agent home layout
 
 The agent home is the cwd you launch the bot from (or whatever you point
@@ -52,12 +65,17 @@ Four env vars; everything else lives in `settings.json` (pi-native).
 | `DEBUG_CHANNEL_ID` | optional | Discord channel ID to cross-post operational logs (tool calls, per-call usage, compaction, lifecycle) |
 | `PI_CODING_AGENT_DIR` | optional | Override `agentDir` if cwd is awkward for your deployment. Default: cwd. |
 
-**Recommended channel layout.** A typical deployment uses two channels:
-one for talking *to* the agent (where users post), and a second
-`DEBUG_CHANNEL_ID` for watching what it's *doing* (tool activity,
-restarts, compaction, errors). Either side can collapse — a single
-channel without a debug feed, or a debug feed alone with the agent in
-`#general` — but two channels reads cleanest day-to-day.
+**Recommended channel layout.** The agent is single-player — it
+responds to every non-bot message in any channel or thread it can
+see, no @mention required, so channel membership is what scopes
+participation. Invite it only into rooms where direct conversation
+with anyone present is what you want. A typical setup uses two
+channels: one for talking *to* the agent (where users post), and a
+second `DEBUG_CHANNEL_ID` for watching what it's *doing* (tool
+activity, restarts, compaction, errors). Either side can collapse —
+a single channel without a debug feed, or a debug feed alone with
+the agent in `#general` — but two channels reads cleanest
+day-to-day.
 
 **Cloud-host workaround.** Discord blocks some cloud IP ranges (notably
 AWS) at `discord.com`. If the bot can't connect from a hosted VM, set
