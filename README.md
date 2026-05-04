@@ -17,28 +17,48 @@ any number of agents.
 
 ## Quick start
 
-Easiest path is hosted: [exe.dev](https://exe.dev) is a great place
-to test and run software, with a built-in agent (Shelley) that takes
-care of setup and sys ops. Spin up a VM with a prompt that links to
-this repo.
-
-To set up locally:
-
 ```bash
 git clone <this repo> ~/discord-agent
 cd ~/discord-agent && bun install
 bun run setup
 ```
 
-The wizard walks you through creating a Discord application, validates
-your bot token, generates the invite URL with the right permissions,
+`bun run setup` is the supported install path. It walks you through
+creating a Discord application, validates your bot token against
+Discord, generates the invite URL with the correct permissions,
 prompts for a model provider key, and lays down a fresh agent home (by
 default `~/agents/<botname>`) with `.env`, persona templates, and an
-optional systemd unit. It prints the run command at the end.
+optional pre-filled systemd unit. The run command prints at the end.
 
-For the manual flow without the wizard, see
-[docs/manual-setup.md](docs/manual-setup.md). For long-term hosting and
-self-modification, see [docs/operating.md](docs/operating.md).
+> **Setting this up via an agent (Shelley, Claude Code, etc.)? Run
+> `bun run setup` and drive its prompts — don't piece the install
+> together by hand.** The wizard is doing real work that's annoying to
+> get right manually:
+>
+> - **Token validation against Discord** — fail-fast on a bad token
+>   instead of a silent gateway disconnect minutes later.
+> - **OAuth invite URL** — the right permission bitfield is computed
+>   from `discord.js`; copy-pasted permission lists drift.
+> - **canary.discord.com fallback** — discord.com is rate-limited from
+>   many cloud IP ranges (often returning multi-hour retry-afters); the
+>   wizard auto-detects this and writes `DISCORD_API_URL` accordingly.
+> - **Pre-filled systemd unit** — generated with absolute paths for
+>   this host, including `StartLimitIntervalSec=0` (a foot-gun if you
+>   miss it — see [docs/operating.md](docs/operating.md)) and
+>   `ReadWritePaths` covering both the agent home and the source repo.
+>
+> Ask the user for the Discord bot token and the LLM provider + key
+> upfront if you want; then start `bun run setup` and feed those answers
+> when prompted. Don't substitute manual `cp` + edit for the wizard.
+
+A hosted shortcut: [exe.dev](https://exe.dev) is a great place to run
+this — its built-in agent (Shelley) can handle setup and sys ops on a
+fresh VM. Spin up a VM with a prompt that links to this repo.
+
+For the manual flow without the wizard (development, environments
+where the wizard doesn't fit), see
+[docs/manual-setup.md](docs/manual-setup.md). For long-term hosting
+and self-modification, see [docs/operating.md](docs/operating.md).
 
 ## Docs
 

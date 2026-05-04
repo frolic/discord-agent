@@ -50,7 +50,7 @@ const invitePermissions = new PermissionsBitField([
 ]).bitfield.toString();
 
 const sourceDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const exampleAgentDir = resolve(sourceDir, "example-agent");
+const templateDir = resolve(sourceDir, "agent-template");
 const repoUrl = pkg.repository.url;
 
 interface DiscoveryResult {
@@ -367,7 +367,7 @@ WantedBy=multi-user.target
 }
 
 function copyTemplate(name: string, agentHome: string): void {
-  const src = resolve(exampleAgentDir, name);
+  const src = resolve(templateDir, name);
   const dest = resolve(agentHome, name);
   if (existsSync(dest)) return;
   copyFileSync(src, dest);

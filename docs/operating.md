@@ -140,7 +140,7 @@ journalctl -u <botname>-discord-agent.service -f       # tail logs
 ```
 
 If you set up by hand, the template at
-[`../example-agent/discord-agent.service`](../example-agent/discord-agent.service)
+[`../agent-template/discord-agent.service`](../agent-template/discord-agent.service)
 uses `$USER`, `$AGENT_HOME`, `$SOURCE_DIR` placeholders — fill those in,
 then run the same `cp` / `daemon-reload` / `enable --now` sequence above.
 

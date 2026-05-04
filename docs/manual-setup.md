@@ -11,9 +11,9 @@ git clone <this repo> ~/discord-agent
 cd ~/discord-agent && bun install
 
 mkdir -p ~/agents/my-bot
-cp example-agent/SYSTEM.md  ~/agents/my-bot/
-cp example-agent/AGENTS.md  ~/agents/my-bot/
-cp example-agent/.env.example ~/agents/my-bot/.env
+cp agent-template/SYSTEM.md  ~/agents/my-bot/
+cp agent-template/AGENTS.md  ~/agents/my-bot/
+cp agent-template/.env.example ~/agents/my-bot/.env
 cd ~/agents/my-bot
 $EDITOR SYSTEM.md                     # voice, tone, behavior
 $EDITOR AGENTS.md                     # background context (or delete it)
@@ -49,6 +49,6 @@ message in any channel or thread the bot can see — it'll reply.
 
 For long-term operation, see [operating.md](operating.md). The example
 agent home ships a systemd unit at
-[`../example-agent/discord-agent.service`](../example-agent/discord-agent.service)
+[`../agent-template/discord-agent.service`](../agent-template/discord-agent.service)
 that you can copy and edit by hand (the wizard generates a pre-filled
 version automatically).
