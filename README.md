@@ -22,7 +22,7 @@ to test and run software, with a built-in agent (Shelley) that takes
 care of setup and sys ops. Spin up a VM with a prompt that links to
 this repo.
 
-To set up locally:
+To set up on your machine:
 
 ```bash
 git clone <this repo> ~/discord-agent
