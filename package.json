@@ -4,10 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Discord harness for pi agents — one warm AgentSession per channel/thread, all state in your agent-home directory (which is also pi's agentDir).",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/frolic/discord-agent"
+  },
   "bin": {
     "discord-agent": "src/bin/agent.ts"
   },
   "scripts": {
+    "setup": "bun src/bin/setup.ts",
     "dev": "bun --watch src/bin/agent.ts",
     "start": "bun src/bin/agent.ts",
     "typecheck": "tsc --noEmit",

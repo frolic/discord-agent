@@ -28,11 +28,9 @@ for *background you want the model to know*, not *rules for how the
 model should behave*. Pi uses the same convention in its CLI; the file
 behaves the same way here.
 
-A worked example lives at [`../example-agent/`](../example-agent/) —
-copy it as a starting point and edit in place.
-
-If `SYSTEM.md` is missing, the bootstrap step creates a minimal default
-on first run.
+A starting template lives at [`../agent-template/`](../agent-template/)
+— `bun run setup` copies it into your agent home, or copy by hand and
+edit in place.
 
 Sharing a persona is sharing the agent home directory — no code changes
 on either side. Persona file edits require a harness restart to take

@@ -127,18 +127,22 @@ pi-native — see the [pi-coding-agent docs](https://github.com/badlogic/pi-mono
 
 ## Running long-term with systemd
 
-A template ships at
-[`../example-agent/discord-agent.service`](../example-agent/discord-agent.service).
-Copy, replace the `$USER`, `$AGENT_HOME`, `$SOURCE_DIR` placeholders, drop
-into `/etc/systemd/system/`, then:
+`bun run setup` generates a pre-filled unit at
+`<agent-home>/<botname>-discord-agent.service` on Linux when you opt in.
+The wizard prints the three sudo commands at the end of setup; install
+with:
 
 ```bash
-sudo cp ~/discord-agent/example-agent/discord-agent.service /etc/systemd/system/<your-bot>.service
-sudo $EDITOR /etc/systemd/system/<your-bot>.service     # replace $USER / $AGENT_HOME / $SOURCE_DIR
+sudo cp <agent-home>/<botname>-discord-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now <your-bot>
-journalctl -u <your-bot> -f                              # tail logs
+sudo systemctl enable --now <botname>-discord-agent.service
+journalctl -u <botname>-discord-agent.service -f       # tail logs
 ```
+
+If you set up by hand, the template at
+[`../agent-template/discord-agent.service`](../agent-template/discord-agent.service)
+uses `$USER`, `$AGENT_HOME`, `$SOURCE_DIR` placeholders — fill those in,
+then run the same `cp` / `daemon-reload` / `enable --now` sequence above.
 
 Three things in the template that matter for self-restarting agents:
 
