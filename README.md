@@ -19,9 +19,9 @@ any number of agents.
 ## Quick start
 
 Easiest path is hosted: [exe.dev](https://exe.dev) is a great place
-to test and run software, with a built-in agent that takes care of
-setup and sys ops. Spin up a VM with a prompt that links to this
-repo.
+to test and run software, with a built-in agent (Shelley) that takes
+care of setup and sys ops. Spin up a VM with a prompt that links to
+this repo.
 
 To set up by hand, the three steps below.
 
