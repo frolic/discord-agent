@@ -61,6 +61,7 @@ For long-term operation, the example agent home ships a systemd unit at
 
 ## Docs
 
+- [docs/goals.md](docs/goals.md) — what the bot gives a user, the feel any rebuild should preserve
 - [docs/persona.md](docs/persona.md) — `SYSTEM.md`, `AGENTS.md`, skills, writing guidance
 - [docs/tools.md](docs/tools.md) — `send` / `react` / `history` / `thread` / `restart_self`, the envelope-tool pattern, interaction model, debug-channel logs
 - [docs/operating.md](docs/operating.md) — agent-home layout, environment, systemd, building binaries, self-modification

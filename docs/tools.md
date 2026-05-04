@@ -4,9 +4,10 @@
 
 **Single-player wake:** the harness wakes the agent on every non-bot
 message in any channel or thread the bot can see. There's no @mention
-requirement, no slash commands, no command syntax. (For a multi-tenant
-server you'd want mention-gating; the place to extend is the
-`messageCreate` handler in [`../src/installRouter.ts`](../src/installRouter.ts).)
+requirement, no slash commands, no command syntax — direct conversations
+stay frictionless. A multi-tenant server would want mention-gating,
+allowlists, or role checks instead; the place to extend is the
+`messageCreate` handler in [`../src/installRouter.ts`](../src/installRouter.ts).
 
 **Text commands the harness handles directly** (these never reach the agent):
 
@@ -29,7 +30,9 @@ finishes its current tool, then addresses your new message.
 ## Tools the agent has
 
 Pi's defaults — **bash, read, write, edit** — plus five harness-specific
-ones:
+ones. The trade-off in giving the agent unrestricted shell and
+filesystem access is power vs blast radius — the assumption is a
+trusted home rather than a hostile sandbox.
 
 - **`send(text, more?, in_reply_to?, attachments?)`** — the only way
   visible text reaches the user. Raw assistant text is dropped by the

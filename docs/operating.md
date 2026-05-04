@@ -52,6 +52,13 @@ Four env vars; everything else lives in `settings.json` (pi-native).
 | `DEBUG_CHANNEL_ID` | optional | Discord channel ID to cross-post operational logs (tool calls, per-call usage, compaction, lifecycle) |
 | `PI_CODING_AGENT_DIR` | optional | Override `agentDir` if cwd is awkward for your deployment. Default: cwd. |
 
+**Recommended channel layout.** A typical deployment uses two channels:
+one for talking *to* the agent (where users post), and a second
+`DEBUG_CHANNEL_ID` for watching what it's *doing* (tool activity,
+restarts, compaction, errors). Either side can collapse — a single
+channel without a debug feed, or a debug feed alone with the agent in
+`#general` — but two channels reads cleanest day-to-day.
+
 **Cloud-host workaround.** Discord blocks some cloud IP ranges (notably
 AWS) at `discord.com`. If the bot can't connect from a hosted VM, set
 `DISCORD_API_URL=https://canary.discord.com/api` in your `.env` to route
