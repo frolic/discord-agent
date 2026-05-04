@@ -17,6 +17,13 @@ any number of agents.
 
 ## Quick start
 
+Easiest path is hosted: [exe.dev](https://exe.dev) is a great place
+to test and run software, with a built-in agent (Shelley) that takes
+care of setup and sys ops. Spin up a VM with a prompt that links to
+this repo.
+
+To set up locally:
+
 ```bash
 git clone <this repo> ~/discord-agent
 cd ~/discord-agent && bun install
@@ -50,10 +57,6 @@ optional pre-filled systemd unit. The run command prints at the end.
 > Ask the user for the Discord bot token and the LLM provider + key
 > upfront if you want; then start `bun run setup` and feed those answers
 > when prompted. Don't substitute manual `cp` + edit for the wizard.
-
-A hosted shortcut: [exe.dev](https://exe.dev) is a great place to run
-this — its built-in agent (Shelley) can handle setup and sys ops on a
-fresh VM. Spin up a VM with a prompt that links to this repo.
 
 For the manual flow without the wizard (development, environments
 where the wizard doesn't fit), see
