@@ -13,8 +13,7 @@ any number of agents.
 
 - [Bun](https://bun.sh) ≥ 1.1
 - A Discord account (you'll create a bot application)
-- An LLM API key from any pi-ai-supported provider — Anthropic, OpenAI,
-  DeepSeek, OpenRouter, Google, etc.
+- An LLM API key from any [pi-supported provider](https://github.com/badlogic/pi-mono/blob/v0.72.1/packages/ai/README.md#supported-providers) — Anthropic, OpenAI, DeepSeek, OpenRouter, Google, etc.
 
 ## Quick start
 
