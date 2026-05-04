@@ -18,7 +18,7 @@ import { homedir, userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as p from "@clack/prompts";
-import { PermissionFlagsBits, PermissionsBitField, REST, Routes } from "discord.js";
+import { PermissionFlagsBits, PermissionsBitField, RateLimitError, REST, Routes } from "discord.js";
 import type { APIUser } from "discord.js";
 import pkg from "../../package.json" with { type: "json" };
 
@@ -56,6 +56,7 @@ const repoUrl = pkg.repository.url;
 interface DiscoveryResult {
   user: APIUser;
   apiBase: string | null;
+  fallbackReason: string | null;
 }
 
 await runSetup();
@@ -218,7 +219,9 @@ async function promptForToken(): Promise<DiscoveryResult & { token: string }> {
       const result = await discoverBot(token);
       spinner.stop(`✓ token valid — bot is "${result.user.username}"`);
       if (result.apiBase) {
-        p.log.info("discord.com unreachable from this host; using canary.discord.com instead.");
+        p.log.info(
+          `discord.com unreachable from this host (${result.fallbackReason}); using canary.discord.com instead.`,
+        );
       }
       return { ...result, token };
     } catch (error) {
@@ -239,22 +242,29 @@ async function promptForToken(): Promise<DiscoveryResult & { token: string }> {
 
 /**
  * Validate the bot token against Discord's REST API and return the bot's
- * identity. If the primary domain is unreachable (network/firewall, not
- * an auth failure), retry against canary.discord.com so cloud-hosted
- * setups don't need a separate manual workaround.
+ * identity. If the primary domain isn't usable from this host (network
+ * blocked, or rate-limited with an absurd retry-after — common on cloud
+ * VMs hitting discord.com from a shared IP range), fall back to
+ * canary.discord.com so cloud-hosted setups don't need a separate manual
+ * workaround.
+ *
+ * `rejectOnRateLimit: () => true` is what makes this work — without it,
+ * discord.js queues the request and waits for the retry-after window
+ * before retrying, which can be tens of thousands of seconds. With it,
+ * 429s throw `RateLimitError` immediately and we can switch hosts.
  */
 async function discoverBot(token: string): Promise<DiscoveryResult> {
   const primary = "https://discord.com/api";
   const canary = "https://canary.discord.com/api";
   try {
     const user = await fetchSelf(token, primary);
-    return { user, apiBase: null };
+    return { user, apiBase: null, fallbackReason: null };
   } catch (error) {
     if (isAuthError(error)) throw new Error(formatAuthError(error));
-    // Network-style failure — try canary.
+    const reason = describeFallbackReason(error);
     try {
       const user = await fetchSelf(token, canary);
-      return { user, apiBase: canary };
+      return { user, apiBase: canary, fallbackReason: reason };
     } catch (canaryError) {
       if (isAuthError(canaryError)) throw new Error(formatAuthError(canaryError));
       throw new Error(
@@ -267,8 +277,22 @@ async function discoverBot(token: string): Promise<DiscoveryResult> {
 }
 
 async function fetchSelf(token: string, api: string): Promise<APIUser> {
-  const rest = new REST({ version: "10", api }).setToken(token);
+  const rest = new REST({
+    version: "10",
+    api,
+    // Throw `RateLimitError` instead of waiting out the retry-after window.
+    // discord.com sometimes returns multi-hour retry-afters to cloud IP
+    // ranges, which would otherwise hang the wizard indefinitely.
+    rejectOnRateLimit: () => true,
+  }).setToken(token);
   return (await rest.get(Routes.user())) as APIUser;
+}
+
+function describeFallbackReason(error: unknown): string {
+  if (error instanceof RateLimitError) {
+    return `rate-limited, retry-after ${Math.round(error.retryAfter / 1000)}s`;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 function isAuthError(error: unknown): boolean {
