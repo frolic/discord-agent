@@ -18,10 +18,10 @@ any number of agents.
 
 ## Quick start
 
-Easiest path is hosted: sign up at [exe.dev](https://exe.dev), spin up
-a VM, and link it to this repo — Shelley walks you through setup and
-can help debug. Same path works for any other harness or piece of
-software you want a place to run.
+Easiest path is hosted: [exe.dev](https://exe.dev) is a great place
+to test and run software, with a built-in agent that takes care of
+setup and sys ops. Spin up a VM with a prompt that links to this
+repo.
 
 To set up by hand, the three steps below.
 
