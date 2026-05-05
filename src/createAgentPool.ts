@@ -125,8 +125,14 @@ export interface AgentPool {
    * `handle` minus the discord.js Message → formatted-line step.
    */
   wakeUp(channelId: string, prompt: string): Promise<void>;
-  /** Trigger pi's context compaction on this channel's session. No-op if the channel has no warm session. */
-  compact(channelId: string): void;
+  /**
+   * Trigger pi's context compaction on this channel's session. Returns
+   * `true` if a new compaction started, `false` if skipped (no warm
+   * session, or one is already in flight). Concurrent calls are skipped
+   * because pi's `AgentSession.compact()` doesn't guard against re-entry
+   * — see upstream issue badlogic/pi-mono#4203.
+   */
+  compact(channelId: string): boolean;
   /** True iff a pool entry exists for this channel — used to gate edit-as-steering on live conversations. */
   hasActive(channelId: string): boolean;
 }
@@ -309,11 +315,23 @@ export function createAgentPool(args: {
     entries.get(channelId)?.session.abort();
   }
 
-  function compact(channelId: string): void {
+  function compact(channelId: string): boolean {
     // No-op when the channel has no warm session — there's nothing to
     // compact, and acquiring an entry just to compact it would be
-    // pointless. Pi's `compact()` itself is fire-and-forget.
-    entries.get(channelId)?.session.compact();
+    // pointless.
+    const entry = entries.get(channelId);
+    if (!entry) return false;
+    // Concurrent compactions on the same session orphan pi's
+    // `_compactionAbortController` and run two LLM summaries in parallel
+    // (badlogic/pi-mono#4203). Skip if one is already in flight.
+    if (entry.session.isCompacting) return false;
+    // Pi can still throw "Already compacted" if the last session entry
+    // is already a compaction — fire-and-forget but catch to avoid an
+    // unhandled rejection.
+    entry.session.compact().catch((error) => {
+      console.error(`[pool] compact ${channelId} failed:`, error);
+    });
+    return true;
   }
 
   async function wakeUp(channelId: string, prompt: string): Promise<void> {
