@@ -106,8 +106,8 @@ async function handleCommand(args: {
     return;
   }
   if (command.startsWith("!compact")) {
-    pool.compact(channelId);
-    await react("🗜️");
+    const started = pool.compact(channelId);
+    await react(started ? "🗜️" : "🚫");
     return;
   }
   if (command.startsWith("!clear")) {
