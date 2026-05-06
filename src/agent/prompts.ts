@@ -99,8 +99,14 @@ Your previous assistant turn produced raw text but did NOT call send. The harnes
  * Retry prompt that includes the model's own dropped text so it doesn't
  * have to regenerate from scratch — just wrap it in send() calls with
  * proper splitting and formatting.
+ *
+ * The content is wrapped in a fence whose backtick count is one greater
+ * than the longest run inside `droppedText` — otherwise an inner code
+ * block (a common shape for dropped text) would terminate the outer
+ * fence early and the model would see a malformed prompt.
  */
 export function harnessReminderWithContent(droppedText: string): string {
+  const fence = pickFence(droppedText);
   return `
 
 ---
@@ -117,7 +123,18 @@ Deliver this content to the user now via one or more send() calls. Rules:
 - Do NOT regenerate or rephrase. Deliver the content below as-is (you may adjust formatting for Discord).
 
 Content to deliver:
-\`\`\`
+${fence}
 ${droppedText}
-\`\`\``;
+${fence}`;
+}
+
+/**
+ * Pick a backtick fence longer than any run already in `text`. Markdown
+ * lets you open a code block with N>=3 backticks and only an N-or-more
+ * fence closes it, so this guarantees the wrap survives nested fences.
+ */
+function pickFence(text: string): string {
+  const runs = text.match(/`+/g) ?? [];
+  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+  return "`".repeat(Math.max(3, longest + 1));
 }
