@@ -93,3 +93,29 @@ export const harnessReminderSuffix = `
 [HARNESS NOTICE — for this single turn only, not part of the user-facing conversation]
 
 Your previous assistant turn produced raw text but did NOT call send. The harness dropped that turn entirely — the user saw nothing. Re-emit the intended content now via send. Do NOT apologize, do NOT say "let me try again" or "sorry about that", do NOT reference this notice. The user is unaware of the previous attempt; from their perspective, this is your first reply.`;
+
+/**
+ * Retry prompt that includes the model's own dropped text so it doesn't
+ * have to regenerate from scratch — just wrap it in send() calls with
+ * proper splitting and formatting.
+ */
+export function harnessReminderWithContent(droppedText: string): string {
+  return `
+
+---
+
+[HARNESS NOTICE — for this single turn only, not part of the user-facing conversation]
+
+Your previous assistant turn produced the text below but did NOT call the send tool. The harness dropped that turn — the user saw nothing.
+
+Deliver this content to the user now via one or more send() calls. Rules:
+- Each send() call must be ≤1900 characters. Split intelligently at paragraph or section boundaries if the content is longer — use more:true on every call except the last.
+- Use Discord formatting. NO markdown tables (they render as raw pipes) — use code blocks for tabular data.
+- Do NOT apologize, reference this notice, or say "let me try again." The user is unaware of the failed attempt.
+- Do NOT regenerate or rephrase. Deliver the content below as-is (you may adjust formatting for Discord).
+
+Content to deliver:
+\`\`\`
+${droppedText}
+\`\`\``;
+}
