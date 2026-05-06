@@ -6,7 +6,7 @@
  *
  * Three buckets, checked in this order (recovery flags only — channels
  * with just a `lastSeenMessageId` and nothing else are simply preserved):
- *   - `cameFromRestart` → intentional restart (restart_self / !restart).
+ *   - `cameFromRestart` → intentional restart (restart_self / /restart).
  *                         Wakes with `harnessRestartPrompt`. Checked first
  *                         because restart_self is itself a tool call, so
  *                         `inTool` is also set on these — but the restart

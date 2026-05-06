@@ -183,7 +183,7 @@ Detection happens at module-import time via `process.env.COMPILED`,
 which the build scripts bake into binaries (`COMPILED=true bun build
 --env=COMPILED* …`). In source mode, `COMPILED` is undefined.
 
-For the user, `!restart` does the same thing as `restart_self` — exits
+For the user, `/restart` does the same thing as `restart_self` — exits
 the process so the supervisor respawns. Useful when state is stuck or
 after pulling fresh code without involving the agent.
 

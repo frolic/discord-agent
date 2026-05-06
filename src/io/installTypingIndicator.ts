@@ -12,12 +12,12 @@
  *     the whole agent run (each LLM call inside a run keeps the indicator
  *     on between calls; only the final `agent_end` stops it).
  *   - `compactionInFlight` — set on `compaction_start`, cleared on
- *     `compaction_end`. Covers manual `!compact` (no surrounding agent
+ *     `compaction_end`. Covers manual `/compact` (no surrounding agent
  *     run) and auto-compactions that happen mid-run.
  *
  * The indicator is on iff either flag is set; it transitions on each
  * event by re-evaluating that boolean. The two flags let manual
- * `!compact` (no surrounding agent run) keep the typing indicator
+ * `/compact` (no surrounding agent run) keep the typing indicator
  * visible even though no `turn_start` fired.
  */
 import type { Client, SendableChannels } from "discord.js";

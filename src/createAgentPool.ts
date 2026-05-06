@@ -121,7 +121,7 @@ export interface AgentPool {
    * Inject a synthetic user-role prompt into the channel's session and run a
    * turn. Used by every "the agent didn't get here through a Discord message"
    * pathway: thread seed messages, restart/crash recovery harness notices,
-   * post-`!clear` context resets, catchup nudges. Mechanically identical to
+   * post-`/clear` context resets, catchup nudges. Mechanically identical to
    * `handle` minus the discord.js Message → formatted-line step.
    */
   wakeUp(channelId: string, prompt: string): Promise<void>;

@@ -78,7 +78,11 @@ async function runSetup(): Promise<void> {
   const discovery = await promptForToken();
 
   // ── Step 2: invite the bot ───────────────────────────────────────────
-  const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${discovery.user.id}&scope=bot&permissions=${invitePermissions}`;
+  // The `applications.commands` scope is what lets the bot register slash
+  // commands (/stop, /compact, /clear, /restart) in the guild. Without it,
+  // commands won't appear in Discord's slash-command UI.
+  const scopes = encodeURIComponent("bot applications.commands");
+  const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${discovery.user.id}&scope=${scopes}&permissions=${invitePermissions}`;
   p.note(
     [
       `Open this URL, pick a server, click Authorize:`,

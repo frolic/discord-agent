@@ -17,8 +17,8 @@ the agent home root — pi auto-discovers everything from `agentDir`
 `SYSTEM.md` is your prompt verbatim. The harness layers a small,
 non-negotiable "harness layer" section at the end covering envelope-tool
 rules (`send` / `react` / `thread`), the inbound message-line format
-(`user_id=… message_id=…` etc.), and the user-facing commands (`!stop`,
-`!compact`, `!clear`, `!restart`). Defined in
+(`user_id=… message_id=…` etc.), and the user-facing slash commands
+(`/stop`, `/compact`, `/clear`, `/restart`). Defined in
 [`../src/agent/prompts.ts`](../src/agent/prompts.ts) as `harnessRules`.
 That's all the harness contributes — everything else is yours.
 

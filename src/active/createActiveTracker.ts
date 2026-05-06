@@ -23,7 +23,7 @@ type ActiveMap = Record<string, ChannelState>;
 export interface ActiveTracker {
   /** User message arrived, no agent reply yet. Cleared on first successful delivery-tool call. */
   markPending(channelId: string): void;
-  /** Mark pending AND cameFromRestart — the channel was put here by an intentional restart_self / !restart. */
+  /** Mark pending AND cameFromRestart — the channel was put here by an intentional restart_self / /restart. */
   markRestart(channelId: string): void;
   /** Clear pending + cameFromRestart. Called when a delivery-tool succeeds. */
   markFulfilled(channelId: string): void;
@@ -33,7 +33,7 @@ export interface ActiveTracker {
   markLastSeen(channelId: string, messageId: string): void;
   /** Clear pending/inTool/cameFromRestart but keep lastSeenMessageId. Called by recoverActive before each wake. */
   clearRecoveryFlags(channelId: string): void;
-  /** Full nuke for `!clear` — drops every field including lastSeenMessageId. */
+  /** Full nuke for `/clear` — drops every field including lastSeenMessageId. */
   clearChannel(channelId: string): void;
   /** Snapshot of every channel currently in the file. Recovery iterates this. */
   listChannels(): Array<{ channelId: string; state: ChannelState }>;

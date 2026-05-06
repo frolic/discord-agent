@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { Client, GatewayIntentBits } from "discord.js";
 import { config } from "./config.ts";
 import { installRouter } from "./installRouter.ts";
+import { installSlashCommands } from "./installSlashCommands.ts";
 import { createAgentPool } from "./createAgentPool.ts";
 import { createActiveTracker } from "./active/createActiveTracker.ts";
 import { recoverActive } from "./active/recoverActive.ts";
@@ -29,6 +30,7 @@ const client = new Client({
 const tracker = createActiveTracker({ activeStateFile: resolve(config.agentDir, "active.json") });
 const pool = createAgentPool({ client, tracker });
 installRouter({ client, pool, tracker });
+installSlashCommands({ client, pool, tracker });
 
 client.once("clientReady", async (readyClient) => {
   console.log(`discord-agent online as ${readyClient.user.tag} — agentDir: ${config.agentDir}`);

@@ -10,7 +10,7 @@
  *                           agent.continue() would replay it, so recovery
  *                           uses a synthetic prompt instead.
  *   - `cameFromRestart`   — the bot exited intentionally (restart_self /
- *                           !restart). Lets recovery distinguish a
+ *                           /restart). Lets recovery distinguish a
  *                           planned restart from a mid-think crash.
  *   - `lastSeenMessageId` — most recent Discord message ID the client
  *                           received in this channel. Survives across

@@ -15,7 +15,7 @@
  * instead of the harness speaking for it.
  *
  * If no supervisor is in place, the bot will NOT come back. The user-side
- * equivalent is the `!restart` command in the router.
+ * equivalent is the `/restart` slash command (see `installSlashCommands`).
  */
 import type { Client } from "discord.js";
 import { defineTool } from "@mariozechner/pi-coding-agent";

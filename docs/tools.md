@@ -4,24 +4,35 @@
 
 **Single-player wake:** the harness wakes the agent on every non-bot
 message in any channel or thread the bot can see. There's no @mention
-requirement, no slash commands, no command syntax — direct conversations
-stay frictionless. A multi-tenant server would want mention-gating,
-allowlists, or role checks instead; the place to extend is the
-`messageCreate` handler in [`../src/installRouter.ts`](../src/installRouter.ts).
+requirement, no command syntax — direct conversations stay frictionless.
+A multi-tenant server would want mention-gating, allowlists, or role
+checks instead; the place to extend is the `messageCreate` handler in
+[`../src/installRouter.ts`](../src/installRouter.ts).
 
-**Text commands the harness handles directly** (these never reach the agent):
+**Slash commands the harness handles directly** (these never reach the
+agent — they're handled in [`../src/installSlashCommands.ts`](../src/installSlashCommands.ts) and dispatched to [`../src/commands.ts`](../src/commands.ts)):
 
-- `!stop` — abort whatever the agent is currently doing. Bot reacts 🛑.
-- `!compact` — trigger pi's context compaction on the current session.
+- `/stop` — abort whatever the agent is currently doing. Replies 🛑.
+- `/compact` — trigger pi's context compaction on the current session.
   Older messages get summarized into a single compaction entry, freeing
-  context budget. Bot reacts 🗜️. Compaction also runs automatically at
-  pi's threshold; this command just triggers it on demand.
-- `!clear` — abort, drop the warm cache entry, delete this channel's
-  `session.jsonl`. Next message starts a fresh conversation. Bot reacts 🗑️.
-- `!restart` — exit the bot process; supervisor (systemd, Docker) restarts
-  with current source. Bot reacts 🔄. Without a supervisor, the bot won't
+  context budget. Replies 🗜️ if started, ⏳ if a compaction is already
+  in flight. Compaction also runs automatically at pi's threshold; this
+  command just triggers it on demand.
+- `/clear` — abort, drop the warm cache entry, delete this channel's
+  `session.jsonl`. Next message starts a fresh conversation. Replies 🗑️.
+- `/restart` — exit the bot process; supervisor (systemd, Docker) restarts
+  with current source. Replies 🔄. Without a supervisor, the bot won't
   come back. Use when state is stuck or after pulling fresh code.
-- Any other `!command` — bot reacts ❓.
+
+All replies are *ephemeral* — only the invoker sees the emoji
+confirmation, keeping the channel uncluttered.
+
+Commands are registered guild-scoped on `clientReady` and on
+`guildCreate`, so they appear immediately in any guild the bot is in.
+The bot needs the `applications.commands` OAuth scope at install time —
+the setup wizard's invite URL includes it. If the bot was installed
+before slash commands existed, re-authorize via the wizard's URL (Discord
+allows incremental scope grants without removing the bot).
 
 **Steering mid-turn:** send another message while the agent is working.
 The harness re-injects it as a steer between tool batches. The agent
@@ -106,7 +117,7 @@ call of each LLM batch carries the per-call usage suffix
 -# ❌ react failed: message 1500... not found in this channel    ← reply-threaded under the start line
 -# 🗜️ [compacting](url) context · trigger=manual
 -# 🗜️ compacted · was 87.3k · "Summary preview..."
--# 🔴 offline — restart_self — applied typing-indicator fix
+-# 🔴 offline — /restart
 ```
 
 Failed tool calls produce a follow-up `❌` line threaded as a Discord

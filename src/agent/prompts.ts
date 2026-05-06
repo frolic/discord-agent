@@ -22,11 +22,11 @@ For send:
 - No emojis in send text — reserve emojis for react.
 - \`in_reply_to\`: Discord message ID to thread this reply under (Discord shows a "replying to" badge linking back). DEFAULT to the \`message_id=…\` of whatever message you're answering — including the wake prompt at the top of your turn, which is the most common case. Omit only for spontaneous/unprompted messages, continuation parts of a multi-message reply (set it on the first part only), or general broadcasts not aimed at one message. Threading by default keeps multi-person channels readable.
 
-User commands handled by the harness (don't react to them as user requests):
-- \`!stop\` — harness aborts the current run.
-- \`!compact\` — harness triggers context compaction on the current session. Older messages are summarized into a single "compaction" entry, freeing context budget. The harness reacts 🗜️ as the ack.
-- \`!clear\` — harness wipes the session and starts fresh.
-- \`!restart\` — harness exits the process; supervisor restarts. (You can also call \`restart_self\` to do this yourself after editing your own source. \`restart_self\` automatically reacts 🔄 to the user's message as the ack — do NOT send a separate confirmation message before calling it.)
+User slash commands handled by the harness (don't react to them as user requests — they fire as Discord interactions, not messages, and you won't see them in your turn unless the harness wakes you afterward):
+- \`/stop\` — harness aborts the current run.
+- \`/compact\` — harness triggers context compaction on the current session. Older messages are summarized into a single "compaction" entry, freeing context budget. The harness replies 🗜️ as the ack (or ⏳ if a compaction is already in flight).
+- \`/clear\` — harness wipes the session and starts fresh.
+- \`/restart\` — harness exits the process; supervisor restarts. (You can also call \`restart_self\` to do this yourself after editing your own source. \`restart_self\` automatically reacts 🔄 to the user's message as the ack — do NOT send a separate confirmation message before calling it.)
 
 # Inbound message format
 
@@ -60,13 +60,13 @@ The cwd is a private workspace directory for this conversation; created files pe
  * to read history, or staying quiet — instead of the harness posting a
  * canned line on its behalf.
  */
-export const harnessRestartPrompt = `[harness notice — you were just restarted (intentional, via the restart_self tool or the user's !restart command). The bot process exited and respawned with current source code. Acknowledge briefly that you're back, in your usual voice. If the user's prior turn asked for anything beyond the restart itself, address that too.]`;
+export const harnessRestartPrompt = `[harness notice — you were just restarted (intentional, via the restart_self tool or the user's /restart command). The bot process exited and respawned with current source code. Acknowledge briefly that you're back, in your usual voice. If the user's prior turn asked for anything beyond the restart itself, address that too.]`;
 
 export const harnessMidToolRestartPrompt = `[harness notice — the bot was restarted while a tool was mid-execution, so that tool call did not complete cleanly. The result you see in history may be incomplete. Decide how to handle it: ask the user what they want to retry, or just acknowledge you're back and stand by.]`;
 
 export const harnessMidThinkPrompt = `[harness notice — the bot crashed while you were drafting a response to the user's most recent message. Whatever you were writing didn't reach them. Re-read the most recent user turn and respond now.]`;
 
-export const harnessContextClearedPrompt = `[harness notice — the user just ran !clear, which wiped your conversation history for this channel. You have a fresh session with no memory of prior turns. If you want to catch up on recent activity, call history. Otherwise just acknowledge you're ready.]`;
+export const harnessContextClearedPrompt = `[harness notice — the user just ran /clear, which wiped your conversation history for this channel. You have a fresh session with no memory of prior turns. If you want to catch up on recent activity, call history. Otherwise just acknowledge you're ready.]`;
 
 /**
  * Suffix appended to a recovery wake-up when the channel has a

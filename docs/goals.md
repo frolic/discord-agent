@@ -16,10 +16,10 @@ it, reply to its message, or talk in a thread it created.
 ### 1. No commands to learn
 
 You just talk to it. @mention, reply, or post in a thread — all work.
-No syntax, no prefix, no slash commands. If someone asks how to use the
-agent, the answer is "talk to it like a person."
+No syntax, no prefix. If someone asks how to use the agent, the answer
+is "talk to it like a person."
 
-The handful of `!commands` (`!stop`, `!compact`, `!clear`, `!restart`)
+The handful of slash commands (`/stop`, `/compact`, `/clear`, `/restart`)
 are *operator* controls, not user vocabulary — they exist for the
 person running the bot, not the people chatting with it.
 
