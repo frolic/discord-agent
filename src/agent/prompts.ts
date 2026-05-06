@@ -129,9 +129,22 @@ ${fence}`;
 }
 
 /**
- * Pick a backtick fence longer than any run already in `text`. Markdown
- * lets you open a code block with N>=3 backticks and only an N-or-more
- * fence closes it, so this guarantees the wrap survives nested fences.
+ * Pick a backtick fence longer than any run already in `text`.
+ *
+ * Why this exists: the fence here delimits content inside the *system
+ * prompt we send to the LLM* on a retry — it's not Discord output.
+ * Without an adaptive fence, a triple-backtick code block inside
+ * `droppedText` (a common shape, since dropped text is often the model
+ * mid-response with markdown) would terminate our outer triple-backtick
+ * fence early. The LLM would then see a malformed prompt with no clear
+ * "this is the exact content to deliver" boundary — by the time the
+ * model reads the prompt, our delimiter choice is fixed; the model
+ * doesn't get to "realize" the structural break.
+ *
+ * Markdown's fence rule: a fence of N backticks (N ≥ 3) closes only on
+ * N-or-more backticks. So picking `longest + 1` guarantees no inner
+ * fence is long enough to close the outer wrap. `Math.max(3, …)` keeps
+ * the floor at a valid fence length when `text` has no backticks.
  */
 function pickFence(text: string): string {
   const runs = text.match(/`+/g) ?? [];
