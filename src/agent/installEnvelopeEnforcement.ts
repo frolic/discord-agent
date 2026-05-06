@@ -19,7 +19,7 @@ import { isAssistantTurnMessage, type AssistantTurnMessage } from "./isAssistant
 import { createRunawayCounter, type RunawayCounter } from "./createRunawayCounter.ts";
 import { sendFallbackForSilentTurn } from "./sendFallbackForSilentTurn.ts";
 import { deliveryToolNameSet } from "./deliveryTools.ts";
-import { harnessReminderSuffix } from "./prompts.ts";
+import { harnessReminderSuffix, harnessReminderWithContent } from "./prompts.ts";
 
 export function installEnvelopeEnforcement(args: {
   session: AgentSession;
@@ -30,13 +30,16 @@ export function installEnvelopeEnforcement(args: {
 
   // Per-agent-run state. Reset on agent_start; signal flows turn_end → agent_end.
   let pendingRetry = false;
-  let alreadyRetried = false;
+  let retryCount = 0;
+  let droppedText: string | null = null;
+  const maxRetries = 2;
 
   session.subscribe(function onSessionEvent(event) {
     if (event.type === "agent_start") {
       runaway.reset();
       pendingRetry = false;
-      alreadyRetried = false;
+      retryCount = 0;
+      droppedText = null;
       return;
     }
     if (event.type === "turn_end") {
@@ -46,9 +49,10 @@ export function installEnvelopeEnforcement(args: {
     }
     if (event.type === "agent_end" && pendingRetry) {
       pendingRetry = false;
+      const textToDeliver = droppedText;
       // setTimeout(0) defers until activeRun clears — agent.continue() throws otherwise.
       setTimeout(() => {
-        retryWithReminder(session).catch((error) =>
+        retryWithReminder(session, textToDeliver).catch((error) =>
           console.error("[harness] reminder continue failed:", error),
         );
       }, 0);
@@ -82,30 +86,51 @@ export function installEnvelopeEnforcement(args: {
     }
 
     // Silent turn — model emitted raw text without using any tool.
-    if (alreadyRetried) {
+    const rawText = message.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text ?? "")
+      .join("\n")
+      .trim();
+
+    if (retryCount >= maxRetries) {
       sendFallbackForSilentTurn({ message, sender });
       return;
     }
+    // Capture the dropped text so the retry prompt can include it.
+    // On the first failure we have the original text; on subsequent
+    // failures we keep whichever is longer (the model may have
+    // regenerated a shorter stub on retry).
+    if (!droppedText || rawText.length > droppedText.length) {
+      droppedText = rawText;
+    }
     pendingRetry = true;
-    alreadyRetried = true;
+    retryCount += 1;
   }
 }
 
 /**
- * One-shot retry: drop the dangling assistant turn (continue() requires
+ * Retry: drop the dangling assistant turn (continue() requires
  * last-message to be user|toolResult), splice an in-prompt nudge for this
  * single continue() call, then restore the prompt. The augmentation never
  * persists to session.jsonl — followUp() would, and that makes the model
  * apologize on retry.
+ *
+ * When droppedText is available, the reminder includes the model's own
+ * text so it can wrap it in send() calls with proper splitting and
+ * formatting instead of regenerating from scratch.
  */
-async function retryWithReminder(session: AgentSession): Promise<void> {
+async function retryWithReminder(session: AgentSession, droppedText: string | null): Promise<void> {
   const messages = session.agent.state.messages;
   const lastMessage = messages[messages.length - 1];
   if (!lastMessage || lastMessage.role !== "assistant") return;
   session.agent.state.messages = messages.slice(0, -1);
 
+  const suffix = droppedText && droppedText.length > 0
+    ? harnessReminderWithContent(droppedText)
+    : harnessReminderSuffix;
+
   const original = session.agent.state.systemPrompt;
-  session.agent.state.systemPrompt = `${original}${harnessReminderSuffix}`;
+  session.agent.state.systemPrompt = `${original}${suffix}`;
   try {
     await session.agent.continue();
   } finally {

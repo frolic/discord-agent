@@ -168,7 +168,7 @@ section appended to the system prompt. The agent can then `read`/`edit`/
 The flow:
 
 1. Agent edits framework source (e.g., `src/io/installTypingIndicator.ts`).
-2. Agent calls `send({ text: "Restarting to apply edits.", more: true })` so the user sees what's happening.
+2. Agent calls `send({ text: "Restarting to apply edits." })` (no `end_of_turn` — the loop keeps going so the next step can fire) so the user sees what's happening.
 3. Agent calls `restart_self({ reason: "tweaked typing-indicator timing" })`.
 4. Bot exits cleanly. Supervisor respawns with the new code. Bun reads
    the source fresh; no module cache to reload.

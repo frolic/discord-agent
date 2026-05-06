@@ -6,16 +6,15 @@
  * each consumer can declare exactly the surface it depends on.
  *
  * Sends are serialized through a FIFO chain so multi-message replies
- * (`more: true`) arrive in order even when several are dispatched
- * concurrently — Discord's REST will return success out of order
- * otherwise. The chain swallows upstream errors so a single failed send
- * doesn't permanently break delivery for the channel.
+ * arrive in order even when several are dispatched concurrently —
+ * Discord's REST will return success out of order otherwise. The chain
+ * swallows upstream errors so a single failed send doesn't permanently
+ * break delivery for the channel.
  */
 import type { Client, Message, SendableChannels } from "discord.js";
 import { buildAttachments } from "./buildAttachments.ts";
 import { buildSendPayload } from "./buildSendPayload.ts";
 import { fetchSendableChannel } from "./fetchSendableChannel.ts";
-import { splitForDelivery } from "./splitForDelivery.ts";
 
 /** Discord's per-message character cap is 2000; we leave a small margin. */
 const hardCharLimit = 1990;
@@ -55,26 +54,22 @@ export function createMessageSender(args: { client: Client; channelId: string })
     const channel = await getChannel();
     if (!channel) return { success: false, length: text.length };
 
-    const sections = text.length > 0 ? splitForDelivery(text) : [];
     const attachments = await buildAttachments(files);
-
-    let lastSentMessage: Message | null = null;
-    for (let index = 0; index < sections.length; index += 1) {
-      const isFirstSection = index === 0;
-      const sectionContent = sections[index]!.slice(0, hardCharLimit);
-      const sentMessage = await channel
-        .send(buildSendPayload({ content: sectionContent, attachments, isFirstSection, inReplyTo }))
-        .catch((error) => {
-          console.error("[sender] message send failed:", error);
-          return null;
-        });
-      if (!sentMessage) continue;
-      lastSentMessage = sentMessage;
+    const content = text.trim().slice(0, hardCharLimit);
+    if (content.length === 0 && attachments.length === 0) {
+      return { success: false, length: 0 };
     }
 
+    const sentMessage = await channel
+      .send(buildSendPayload({ content, attachments, isFirstSection: true, inReplyTo }))
+      .catch((error) => {
+        console.error("[sender] message send failed:", error);
+        return null;
+      });
+
     return {
-      success: lastSentMessage !== null,
-      messageId: lastSentMessage?.id,
+      success: sentMessage !== null,
+      messageId: sentMessage?.id,
       length: text.length,
     };
   }

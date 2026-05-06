@@ -14,10 +14,11 @@ Every reply to the user MUST go through ONE of these two tools. Raw text in your
 If you call neither, the user sees nothing.
 
 For send:
-- Single reply (most common): call once with just \`text\`. The agent loop ends after delivery.
-- Multi-message reply: call multiple times. On every call EXCEPT the last, set \`more: true\` so the loop keeps going. On the final call, omit \`more\` (or set it to false) — the loop ends and you're done.
-- Forgetting \`more: true\` on an intermediate call cuts the reply short after that message. Forgetting to omit it on the last call risks looping.
-- Each call ≤ ~1900 characters.
+- After each send, the agent loop **continues by default** — you can call more tools or send more messages.
+- Set \`end_of_turn: true\` on your **final** send when you have nothing left to do. This ends the agent loop.
+- Single reply (most common): one send with \`end_of_turn: true\`.
+- Multi-step work: send a status message (no end_of_turn) → do work → send results with \`end_of_turn: true\`.
+- Each call ≤1900 characters — longer is rejected. Split at paragraph or section boundaries into multiple sends.
 - Plain prose with Discord markdown (\`**bold**\`, \`*italic*\`, \`\\\`code\\\`\`, code fences). Don't wrap whole replies in code blocks.
 - No emojis in send text — reserve emojis for react.
 - \`in_reply_to\`: Discord message ID to thread this reply under (Discord shows a "replying to" badge linking back). DEFAULT to the \`message_id=…\` of whatever message you're answering — including the wake prompt at the top of your turn, which is the most common case. Omit only for spontaneous/unprompted messages, continuation parts of a multi-message reply (set it on the first part only), or general broadcasts not aimed at one message. Threading by default keeps multi-person channels readable.
@@ -59,8 +60,14 @@ The cwd is a private workspace directory for this conversation; created files pe
  * The agent decides how to respond — a brief acknowledgement, a tool call
  * to read history, or staying quiet — instead of the harness posting a
  * canned line on its behalf.
+ *
+ * Tag-case convention: lowercase `[harness notice — …]` for these
+ * synthetic *user-role* prompts the agent reads and responds to. UPPERCASE
+ * `[HARNESS NOTICE — …]` is used by the system-prompt-suffix retry nudges
+ * (`harnessReminderSuffix`, `harnessReminderWithContent`) to signal "this
+ * is non-conversational scaffolding — do not let it leak into your reply."
  */
-export const harnessRestartPrompt = `[harness notice — you were just restarted (intentional, via the restart_self tool or the user's !restart command). The bot process exited and respawned with current source code. Acknowledge briefly that you're back, in your usual voice. If the user's prior turn asked for anything beyond the restart itself, address that too.]`;
+export const harnessRestartPrompt = `[harness notice — you were just restarted (intentional, via the restart_self tool or the user's !restart command). The bot process exited and respawned with current source code. Acknowledge briefly that you're back, in your usual voice. Don't apologize or imply anything went wrong — the restart was intentional. If the user's prior turn asked for anything beyond the restart itself, address that too.]`;
 
 export const harnessMidToolRestartPrompt = `[harness notice — the bot was restarted while a tool was mid-execution, so that tool call did not complete cleanly. The result you see in history may be incomplete. Decide how to handle it: ask the user what they want to retry, or just acknowledge you're back and stand by.]`;
 
@@ -85,6 +92,12 @@ export function harnessCatchupSuffix(lastSeenMessageId: string): string {
  * One-shot system-prompt suffix injected for a single agent.continue() call
  * after the model emits raw text instead of a delivery tool. Restored to
  * baseline immediately after the retry — never persists to session.jsonl.
+ *
+ * In practice this fallback fires only when the silent turn produced
+ * literally empty text. Any non-empty raw text takes the content-aware
+ * path through `harnessReminderWithContent`, which gives the model the
+ * dropped text to wrap rather than asking it to regenerate. Kept here
+ * because that empty-text edge case still needs *some* nudge.
  */
 export const harnessReminderSuffix = `
 
@@ -93,3 +106,60 @@ export const harnessReminderSuffix = `
 [HARNESS NOTICE — for this single turn only, not part of the user-facing conversation]
 
 Your previous assistant turn produced raw text but did NOT call send. The harness dropped that turn entirely — the user saw nothing. Re-emit the intended content now via send. Do NOT apologize, do NOT say "let me try again" or "sorry about that", do NOT reference this notice. The user is unaware of the previous attempt; from their perspective, this is your first reply.`;
+
+/**
+ * Retry prompt that includes the model's own dropped text so it doesn't
+ * have to regenerate from scratch — just wrap it in send() calls with
+ * proper splitting and formatting.
+ *
+ * The content is wrapped in a fence whose backtick count is one greater
+ * than the longest run inside `droppedText` — otherwise an inner code
+ * block (a common shape for dropped text) would terminate the outer
+ * fence early and the model would see a malformed prompt.
+ */
+export function harnessReminderWithContent(droppedText: string): string {
+  const fence = pickFence(droppedText);
+  return `
+
+---
+
+[HARNESS NOTICE — for this single turn only, not part of the user-facing conversation]
+
+Your previous assistant turn produced the text below but did NOT call the send tool. The harness dropped that turn — the user saw nothing.
+
+Deliver this content to the user now via one or more send() calls. Rules:
+- Each send() call must be ≤1900 characters. Split intelligently at paragraph or section boundaries if the content is longer.
+- Set end_of_turn: true on the LAST send call only.
+- Use Discord formatting. NO markdown tables (they render as raw pipes) — use code blocks for tabular data.
+- Do NOT apologize, reference this notice, or say "let me try again." The user is unaware of the failed attempt.
+- Deliver the content below substantially as-is — you may reformat to satisfy the Discord rules above (e.g. tables → code blocks) but don't change the substance.
+
+Content to deliver:
+${fence}
+${droppedText}
+${fence}`;
+}
+
+/**
+ * Pick a backtick fence longer than any run already in `text`.
+ *
+ * Why this exists: the fence here delimits content inside the *system
+ * prompt we send to the LLM* on a retry — it's not Discord output.
+ * Without an adaptive fence, a triple-backtick code block inside
+ * `droppedText` (a common shape, since dropped text is often the model
+ * mid-response with markdown) would terminate our outer triple-backtick
+ * fence early. The LLM would then see a malformed prompt with no clear
+ * "this is the exact content to deliver" boundary — by the time the
+ * model reads the prompt, our delimiter choice is fixed; the model
+ * doesn't get to "realize" the structural break.
+ *
+ * Markdown's fence rule: a fence of N backticks (N ≥ 3) closes only on
+ * N-or-more backticks. So picking `longest + 1` guarantees no inner
+ * fence is long enough to close the outer wrap. `Math.max(3, …)` keeps
+ * the floor at a valid fence length when `text` has no backticks.
+ */
+function pickFence(text: string): string {
+  const runs = text.match(/`+/g) ?? [];
+  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+  return "`".repeat(Math.max(3, longest + 1));
+}
