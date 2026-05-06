@@ -74,6 +74,14 @@ ${discordFormattingDoc}`,
       ),
     }),
     execute: async (_id, params) => {
+      if (params.text.length > 1900) {
+        return {
+          content: [{ type: "text", text: `Rejected: ${params.text.length} chars exceeds the 1900 char limit. Split your content into multiple send calls at natural paragraph/section boundaries. Do NOT summarize or shorten — send the full content across multiple calls, setting endOfTurn: true only on the last one.` }],
+          details: { length: params.text.length, messageId: undefined, attachmentCount: 0 },
+          isError: true,
+          terminate: false,
+        };
+      }
       const validatedPaths = await validateAttachments(params.attachments ?? []);
       const sent = await sender.send({
         text: params.text,
