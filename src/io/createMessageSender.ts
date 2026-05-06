@@ -6,7 +6,7 @@
  * each consumer can declare exactly the surface it depends on.
  *
  * Sends are serialized through a FIFO chain so multi-message replies
- * (`more: true`) arrive in order even when several are dispatched
+ * (multi-message replies) arrive in order even when several are dispatched
  * concurrently — Discord's REST will return success out of order
  * otherwise. The chain swallows upstream errors so a single failed send
  * doesn't permanently break delivery for the channel.

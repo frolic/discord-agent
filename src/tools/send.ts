@@ -4,9 +4,11 @@
  * Discord messages. The model converges on tool-only output within a few
  * turns because raw text has no observable effect.
  *
- * `terminate: !more` makes single-reply (the common case) a clean one-shot
- * — the agent loop ends after delivery — while multi-message replies are
- * explicit and bounded by the model's own choice to keep setting more:true.
+ * `terminate: endOfTurn` — the agent loop continues by default after a
+ * send. The model must explicitly signal `endOfTurn: true` on its final
+ * send to end the turn. This means forgetting the flag keeps the loop
+ * alive (caught by the runaway counter) rather than silently dropping
+ * work the user is waiting for.
  */
 import { stat } from "node:fs/promises";
 import { defineTool } from "@mariozechner/pi-coding-agent";
@@ -43,7 +45,7 @@ export function createSendTool(args: { sender: MessageSender }) {
   return defineTool({
     name: "send",
     label: "send message",
-    description: `Send a message to the Discord conversation. ALL replies to the user MUST go through this tool — raw text replies are NOT delivered (the user cannot see them). Each call posts as one Discord message; for multi-part replies, call multiple times with more:true on intermediate calls.
+    description: `Send a message to the Discord conversation. ALL replies to the user MUST go through this tool — raw text replies are NOT delivered (the user cannot see them). Each call posts one Discord message. The agent loop continues after each call unless you set endOfTurn: true.
 
 To attach files (images, docs, generated artifacts), pass absolute paths in the attachments array. The files post inline with this message.
 ${discordFormattingDoc}`,
@@ -51,10 +53,10 @@ ${discordFormattingDoc}`,
       text: Type.String({
         description: "the message content (≤1900 chars). See description for supported Discord formatting.",
       }),
-      more: Type.Optional(
+      endOfTurn: Type.Optional(
         Type.Boolean({
           description:
-            "set true ONLY if you have additional send calls coming after this one. Default false — the agent loop ends after this delivery. Use for multi-message replies: set more:true on every message EXCEPT the last.",
+            "set true to end your turn after this message is delivered. Default false — the agent loop continues, letting you call more tools or send more messages. Set true on your FINAL send when you have nothing left to do.",
         }),
       ),
       in_reply_to: Type.Optional(
@@ -90,7 +92,7 @@ ${discordFormattingDoc}`,
           messageId: sent.messageId,
           attachmentCount: validatedPaths.length,
         },
-        terminate: !params.more,
+        terminate: params.endOfTurn ?? false,
       };
     },
   });

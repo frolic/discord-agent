@@ -2,7 +2,7 @@
  * Circuit breaker for the "model only ever calls `send`" failure mode. If
  * the agent loops over and over, calling exactly one `send` per turn and
  * nothing else, that's almost certainly a bug (model can't decide to stop
- * via `more: false`, for example) — abort the session before it eats
+ * via `endOfTurn: true`, for example) — abort the session before it eats
  * budget and floods the channel.
  *
  * State is encapsulated per session: the counter owns its number inside

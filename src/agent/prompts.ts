@@ -14,9 +14,10 @@ Every reply to the user MUST go through ONE of these two tools. Raw text in your
 If you call neither, the user sees nothing.
 
 For send:
-- Single reply (most common): call once with just \`text\`. The agent loop ends after delivery.
-- Multi-message reply: call multiple times. On every call EXCEPT the last, set \`more: true\` so the loop keeps going. On the final call, omit \`more\` (or set it to false) — the loop ends and you're done.
-- Forgetting \`more: true\` on an intermediate call cuts the reply short after that message. Forgetting to omit it on the last call risks looping.
+- After each send, the agent loop **continues by default** — you can call more tools or send more messages.
+- Set \`endOfTurn: true\` on your **final** send when you have nothing left to do. This ends the agent loop.
+- Single reply (most common): one send with \`endOfTurn: true\`.
+- Multi-step work: send a status message (no endOfTurn) → do work → send results with \`endOfTurn: true\`.
 - Each call ≤ ~1900 characters.
 - Plain prose with Discord markdown (\`**bold**\`, \`*italic*\`, \`\\\`code\\\`\`, code fences). Don't wrap whole replies in code blocks.
 - No emojis in send text — reserve emojis for react.
@@ -109,7 +110,8 @@ export function harnessReminderWithContent(droppedText: string): string {
 Your previous assistant turn produced the text below but did NOT call the send tool. The harness dropped that turn — the user saw nothing.
 
 Deliver this content to the user now via one or more send() calls. Rules:
-- Each send() call must be ≤1900 characters. Split intelligently at paragraph or section boundaries if the content is longer — use more:true on every call except the last.
+- Each send() call must be ≤1900 characters. Split intelligently at paragraph or section boundaries if the content is longer.
+- Set endOfTurn: true on the LAST send call only.
 - Use Discord formatting. NO markdown tables (they render as raw pipes) — use code blocks for tabular data.
 - Do NOT apologize, reference this notice, or say "let me try again." The user is unaware of the failed attempt.
 - Do NOT regenerate or rephrase. Deliver the content below as-is (you may adjust formatting for Discord).
