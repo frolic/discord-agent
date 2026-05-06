@@ -12,20 +12,23 @@ checks instead; the place to extend is the `messageCreate` handler in
 **Slash commands the harness handles directly** (these never reach the
 agent — they're handled in [`../src/installSlashCommands.ts`](../src/installSlashCommands.ts) and dispatched to [`../src/commands.ts`](../src/commands.ts)):
 
-- `/stop` — abort whatever the agent is currently doing. Replies 🛑.
+- `/stop` — abort whatever the agent is currently doing. Replies "🛑 Stopped the current run."
 - `/compact` — trigger pi's context compaction on the current session.
   Older messages get summarized into a single compaction entry, freeing
-  context budget. Replies 🗜️ if started, ⏳ if a compaction is already
-  in flight. Compaction also runs automatically at pi's threshold; this
-  command just triggers it on demand.
+  context budget. Replies "🗜️ Compacting context …" if started, or
+  "⏳ A compaction is already in flight…" if one's already running.
+  Compaction also runs automatically at pi's threshold; this command
+  just triggers it on demand.
 - `/clear` — abort, drop the warm cache entry, delete this channel's
-  `session.jsonl`. Next message starts a fresh conversation. Replies 🗑️.
+  `session.jsonl`. Next message starts a fresh conversation. Replies
+  "🗑️ Session cleared. Your next message starts a fresh conversation."
 - `/restart` — exit the bot process; supervisor (systemd, Docker) restarts
-  with current source. Replies 🔄. Without a supervisor, the bot won't
-  come back. Use when state is stuck or after pulling fresh code.
+  with current source. Replies "🔄 Restarting the bot process …". Without
+  a supervisor, the bot won't come back. Use when state is stuck or after
+  pulling fresh code.
 
-All replies are *ephemeral* — only the invoker sees the emoji
-confirmation, keeping the channel uncluttered.
+All replies are *ephemeral* — only the invoker sees the confirmation,
+keeping the channel uncluttered.
 
 Commands are registered guild-scoped on `clientReady` and on
 `guildCreate`, so they appear immediately in any guild the bot is in.

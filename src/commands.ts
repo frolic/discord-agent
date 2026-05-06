@@ -10,11 +10,13 @@ import { harnessContextClearedPrompt } from "./agent/prompts.ts";
 import { postDebugLine } from "./io/postDebugLine.ts";
 
 /**
- * Reply contract: emoji feedback delivered by the surface. For slash
- * commands, this is an ephemeral interaction reply with the emoji as
- * content.
+ * Reply contract: a short user-facing acknowledgement string. For slash
+ * commands, this is delivered as an ephemeral interaction reply (visible
+ * only to the invoker). The string typically leads with an emoji as a
+ * visual marker, followed by a few words on what happened or what to
+ * expect next.
  */
-export type CommandReply = (emoji: string) => Promise<unknown>;
+export type CommandReply = (message: string) => Promise<unknown>;
 
 export interface CommandContext {
   channelId: string;
@@ -40,18 +42,22 @@ export async function runCommand(name: CommandName, ctx: CommandContext): Promis
   switch (name) {
     case "stop":
       ctx.pool.abort(ctx.channelId);
-      await ctx.reply("🛑");
+      await ctx.reply("🛑 Stopped the current run.");
       return;
 
     case "compact": {
       const started = ctx.pool.compact(ctx.channelId);
-      await ctx.reply(started ? "🗜️" : "⏳");
+      await ctx.reply(
+        started
+          ? "🗜️ Compacting context — older messages are being summarized into a single entry."
+          : "⏳ A compaction is already in flight. Try again once it finishes.",
+      );
       return;
     }
 
     case "clear":
       await ctx.pool.clear(ctx.channelId);
-      await ctx.reply("🗑️");
+      await ctx.reply("🗑️ Session cleared. Your next message starts a fresh conversation.");
       // Wake the fresh session with a harness notice so the agent knows its
       // history was wiped — it can call the `history` tool if it wants context.
       ctx.pool.wakeUp(ctx.channelId, harnessContextClearedPrompt).catch((error) =>
@@ -60,7 +66,7 @@ export async function runCommand(name: CommandName, ctx: CommandContext): Promis
       return;
 
     case "restart":
-      await ctx.reply("🔄");
+      await ctx.reply("🔄 Restarting the bot process — back in a moment.");
       await postDebugLine({
         client: ctx.client,
         content: "-# 🔴 offline — /restart",

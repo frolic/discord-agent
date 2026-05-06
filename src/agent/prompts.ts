@@ -24,7 +24,7 @@ For send:
 
 User slash commands handled by the harness (don't react to them as user requests — they fire as Discord interactions, not messages, and you won't see them in your turn unless the harness wakes you afterward):
 - \`/stop\` — harness aborts the current run.
-- \`/compact\` — harness triggers context compaction on the current session. Older messages are summarized into a single "compaction" entry, freeing context budget. The harness replies 🗜️ as the ack (or ⏳ if a compaction is already in flight).
+- \`/compact\` — harness triggers context compaction on the current session. Older messages are summarized into a single "compaction" entry, freeing context budget. The harness replies with a short "compacting context…" ack (or notes that one's already in flight).
 - \`/clear\` — harness wipes the session and starts fresh.
 - \`/restart\` — harness exits the process; supervisor restarts. (You can also call \`restart_self\` to do this yourself after editing your own source. \`restart_self\` automatically reacts 🔄 to the user's message as the ack — do NOT send a separate confirmation message before calling it.)
 

@@ -65,14 +65,14 @@ export function installSlashCommands(args: {
       client: interaction.client,
       pool,
       tracker,
-      reply: async (emoji) => {
-        // Ephemeral reply with the same emoji the prefix path uses as a
-        // reaction. Keeps the channel uncluttered — only the invoker sees
-        // the confirmation.
+      reply: async (message) => {
+        // Ephemeral reply — visible only to the invoker, keeps the channel
+        // uncluttered. Each command supplies its own short ack string with
+        // an emoji marker + a few words on what happened.
         if (interaction.replied || interaction.deferred) return;
         await interaction
-          .reply({ content: emoji, flags: MessageFlags.Ephemeral })
-          .catch((error) => console.error(`[slash] reply ${emoji} failed:`, error));
+          .reply({ content: message, flags: MessageFlags.Ephemeral })
+          .catch((error) => console.error(`[slash] reply failed: ${message}`, error));
       },
     });
   });
