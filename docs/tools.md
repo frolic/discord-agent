@@ -34,13 +34,15 @@ ones. The trade-off in giving the agent unrestricted shell and
 filesystem access is power vs blast radius — the assumption is a
 trusted home rather than a hostile sandbox.
 
-- **`send(text, more?, in_reply_to?, attachments?)`** — the only way
+- **`send(text, endOfTurn?, in_reply_to?, attachments?)`** — the only way
   visible text reaches the user. Raw assistant text is dropped by the
-  harness. Multi-message replies: set `more: true` on every call except the
-  last. Pass `in_reply_to=<message_id>` to thread the reply under a
-  specific message (Discord shows a "replying to" badge). Attach files
-  inline by passing absolute paths in `attachments` (≤24MB each, ≤10 per
-  message).
+  harness. The agent loop continues after each call by default; set
+  `endOfTurn: true` on the final call when there's nothing left to do.
+  Pass `in_reply_to=<message_id>` to thread the reply under a specific
+  message (Discord shows a "replying to" badge). Attach files inline by
+  passing absolute paths in `attachments` (≤24MB each, ≤10 per message).
+  `text` must be ≤1900 chars — longer messages are rejected; split into
+  multiple calls at paragraph/section boundaries.
 - **`react(emoji, message_id)`** — toggle an emoji reaction on a specific
   message. Calling twice with the same emoji removes it. Use for "thanks /
   got it / 👍" style acknowledgments. The `message_id` is mandatory
