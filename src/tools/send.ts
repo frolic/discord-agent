@@ -4,8 +4,8 @@
  * Discord messages. The model converges on tool-only output within a few
  * turns because raw text has no observable effect.
  *
- * `terminate: endOfTurn` — the agent loop continues by default after a
- * send. The model must explicitly signal `endOfTurn: true` on its final
+ * `terminate: end_of_turn` — the agent loop continues by default after a
+ * send. The model must explicitly signal `end_of_turn: true` on its final
  * send to end the turn. This means forgetting the flag keeps the loop
  * alive (caught by the runaway counter) rather than silently dropping
  * work the user is waiting for.
@@ -45,7 +45,7 @@ export function createSendTool(args: { sender: MessageSender }) {
   return defineTool({
     name: "send",
     label: "send message",
-    description: `Send a message to the Discord conversation. ALL replies to the user MUST go through this tool — raw text replies are NOT delivered (the user cannot see them). Each call posts one Discord message. The agent loop continues after each call unless you set endOfTurn: true.
+    description: `Send a message to the Discord conversation. ALL replies to the user MUST go through this tool — raw text replies are NOT delivered (the user cannot see them). Each call posts one Discord message. The agent loop continues after each call unless you set end_of_turn: true.
 
 To attach files (images, docs, generated artifacts), pass absolute paths in the attachments array. The files post inline with this message.
 ${discordFormattingDoc}`,
@@ -53,7 +53,7 @@ ${discordFormattingDoc}`,
       text: Type.String({
         description: "the message content (≤1900 chars). See description for supported Discord formatting.",
       }),
-      endOfTurn: Type.Optional(
+      end_of_turn: Type.Optional(
         Type.Boolean({
           description:
             "set true to end your turn after this message is delivered. Default false — the agent loop continues, letting you call more tools or send more messages. Set true on your FINAL send when you have nothing left to do.",
@@ -76,7 +76,7 @@ ${discordFormattingDoc}`,
     execute: async (_id, params) => {
       if (params.text.length > 1900) {
         return {
-          content: [{ type: "text", text: `Rejected: ${params.text.length} chars exceeds the 1900 char limit. Split your content into multiple send calls at natural paragraph/section boundaries. Do NOT summarize or shorten — send the full content across multiple calls, setting endOfTurn: true only on the last one.` }],
+          content: [{ type: "text", text: `Rejected: ${params.text.length} chars exceeds the 1900 char limit. Split your content into multiple send calls at natural paragraph/section boundaries. Do NOT summarize or shorten — send the full content across multiple calls, setting end_of_turn: true only on the last one.` }],
           details: { length: params.text.length, messageId: undefined, attachmentCount: 0 },
           isError: true,
           terminate: false,
@@ -100,7 +100,7 @@ ${discordFormattingDoc}`,
           messageId: sent.messageId,
           attachmentCount: validatedPaths.length,
         },
-        terminate: params.endOfTurn ?? false,
+        terminate: params.end_of_turn ?? false,
       };
     },
   });

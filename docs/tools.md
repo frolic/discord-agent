@@ -34,10 +34,10 @@ ones. The trade-off in giving the agent unrestricted shell and
 filesystem access is power vs blast radius — the assumption is a
 trusted home rather than a hostile sandbox.
 
-- **`send(text, endOfTurn?, in_reply_to?, attachments?)`** — the only way
+- **`send(text, end_of_turn?, in_reply_to?, attachments?)`** — the only way
   visible text reaches the user. Raw assistant text is dropped by the
   harness. The agent loop continues after each call by default; set
-  `endOfTurn: true` on the final call when there's nothing left to do.
+  `end_of_turn: true` on the final call when there's nothing left to do.
   Pass `in_reply_to=<message_id>` to thread the reply under a specific
   message (Discord shows a "replying to" badge). Attach files inline by
   passing absolute paths in `attachments` (≤24MB each, ≤10 per message).

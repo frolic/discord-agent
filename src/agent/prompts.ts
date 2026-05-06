@@ -15,9 +15,9 @@ If you call neither, the user sees nothing.
 
 For send:
 - After each send, the agent loop **continues by default** — you can call more tools or send more messages.
-- Set \`endOfTurn: true\` on your **final** send when you have nothing left to do. This ends the agent loop.
-- Single reply (most common): one send with \`endOfTurn: true\`.
-- Multi-step work: send a status message (no endOfTurn) → do work → send results with \`endOfTurn: true\`.
+- Set \`end_of_turn: true\` on your **final** send when you have nothing left to do. This ends the agent loop.
+- Single reply (most common): one send with \`end_of_turn: true\`.
+- Multi-step work: send a status message (no end_of_turn) → do work → send results with \`end_of_turn: true\`.
 - Each call ≤ ~1900 characters.
 - Plain prose with Discord markdown (\`**bold**\`, \`*italic*\`, \`\\\`code\\\`\`, code fences). Don't wrap whole replies in code blocks.
 - No emojis in send text — reserve emojis for react.
@@ -117,7 +117,7 @@ Your previous assistant turn produced the text below but did NOT call the send t
 
 Deliver this content to the user now via one or more send() calls. Rules:
 - Each send() call must be ≤1900 characters. Split intelligently at paragraph or section boundaries if the content is longer.
-- Set endOfTurn: true on the LAST send call only.
+- Set end_of_turn: true on the LAST send call only.
 - Use Discord formatting. NO markdown tables (they render as raw pipes) — use code blocks for tabular data.
 - Do NOT apologize, reference this notice, or say "let me try again." The user is unaware of the failed attempt.
 - Do NOT regenerate or rephrase. Deliver the content below as-is (you may adjust formatting for Discord).
