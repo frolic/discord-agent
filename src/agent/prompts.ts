@@ -18,7 +18,7 @@ For send:
 - Set \`end_of_turn: true\` on your **final** send when you have nothing left to do. This ends the agent loop.
 - Single reply (most common): one send with \`end_of_turn: true\`.
 - Multi-step work: send a status message (no end_of_turn) → do work → send results with \`end_of_turn: true\`.
-- Each call ≤ ~1900 characters.
+- Each call ≤1900 characters — longer is rejected. Split at paragraph or section boundaries into multiple sends.
 - Plain prose with Discord markdown (\`**bold**\`, \`*italic*\`, \`\\\`code\\\`\`, code fences). Don't wrap whole replies in code blocks.
 - No emojis in send text — reserve emojis for react.
 - \`in_reply_to\`: Discord message ID to thread this reply under (Discord shows a "replying to" badge linking back). DEFAULT to the \`message_id=…\` of whatever message you're answering — including the wake prompt at the top of your turn, which is the most common case. Omit only for spontaneous/unprompted messages, continuation parts of a multi-message reply (set it on the first part only), or general broadcasts not aimed at one message. Threading by default keeps multi-person channels readable.
@@ -60,8 +60,14 @@ The cwd is a private workspace directory for this conversation; created files pe
  * The agent decides how to respond — a brief acknowledgement, a tool call
  * to read history, or staying quiet — instead of the harness posting a
  * canned line on its behalf.
+ *
+ * Tag-case convention: lowercase `[harness notice — …]` for these
+ * synthetic *user-role* prompts the agent reads and responds to. UPPERCASE
+ * `[HARNESS NOTICE — …]` is used by the system-prompt-suffix retry nudges
+ * (`harnessReminderSuffix`, `harnessReminderWithContent`) to signal "this
+ * is non-conversational scaffolding — do not let it leak into your reply."
  */
-export const harnessRestartPrompt = `[harness notice — you were just restarted (intentional, via the restart_self tool or the user's !restart command). The bot process exited and respawned with current source code. Acknowledge briefly that you're back, in your usual voice. If the user's prior turn asked for anything beyond the restart itself, address that too.]`;
+export const harnessRestartPrompt = `[harness notice — you were just restarted (intentional, via the restart_self tool or the user's !restart command). The bot process exited and respawned with current source code. Acknowledge briefly that you're back, in your usual voice. Don't apologize or imply anything went wrong — the restart was intentional. If the user's prior turn asked for anything beyond the restart itself, address that too.]`;
 
 export const harnessMidToolRestartPrompt = `[harness notice — the bot was restarted while a tool was mid-execution, so that tool call did not complete cleanly. The result you see in history may be incomplete. Decide how to handle it: ask the user what they want to retry, or just acknowledge you're back and stand by.]`;
 
@@ -86,6 +92,12 @@ export function harnessCatchupSuffix(lastSeenMessageId: string): string {
  * One-shot system-prompt suffix injected for a single agent.continue() call
  * after the model emits raw text instead of a delivery tool. Restored to
  * baseline immediately after the retry — never persists to session.jsonl.
+ *
+ * In practice this fallback fires only when the silent turn produced
+ * literally empty text. Any non-empty raw text takes the content-aware
+ * path through `harnessReminderWithContent`, which gives the model the
+ * dropped text to wrap rather than asking it to regenerate. Kept here
+ * because that empty-text edge case still needs *some* nudge.
  */
 export const harnessReminderSuffix = `
 
@@ -120,7 +132,7 @@ Deliver this content to the user now via one or more send() calls. Rules:
 - Set end_of_turn: true on the LAST send call only.
 - Use Discord formatting. NO markdown tables (they render as raw pipes) — use code blocks for tabular data.
 - Do NOT apologize, reference this notice, or say "let me try again." The user is unaware of the failed attempt.
-- Do NOT regenerate or rephrase. Deliver the content below as-is (you may adjust formatting for Discord).
+- Deliver the content below substantially as-is — you may reformat to satisfy the Discord rules above (e.g. tables → code blocks) but don't change the substance.
 
 Content to deliver:
 ${fence}
