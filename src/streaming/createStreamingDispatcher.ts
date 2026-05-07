@@ -115,6 +115,12 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   const messageIds: string[] = [];
   // True while end() is draining; forces seal fallbacks even mid-construct.
   let ending = false;
+  // True once we've posted at least one Discord message. Used to pick
+  // between the (short) initial-post debounce and the (longer) edit
+  // debounce — without this, every seal-induced `currentMessageId = null`
+  // window wrongly drops back to the initial-post debounce, letting
+  // edits burst past Discord's per-channel rate bucket.
+  let hasPosted = false;
 
   function scheduleFlush(delay: number): void {
     if (timerHandle !== null) return; // one pending flush at a time
@@ -161,7 +167,10 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
           }
         } else if (split.keepRendered.length > 0) {
           const result = await post(split.keepRendered);
-          if (result !== null) messageIds.push(result.messageId);
+          if (result !== null) {
+            messageIds.push(result.messageId);
+            hasPosted = true;
+          }
         }
         // Drop the raw chars consumed by `keep`; deltas arriving during
         // the seal-edit (now past `split.rawConsumed` in the buffer) ride
@@ -185,6 +194,7 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
       }
       currentMessageId = result.messageId;
       messageIds.push(result.messageId);
+      hasPosted = true;
       lastSentContent = prep.rendered;
       return;
     }
@@ -202,11 +212,12 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   function append(delta: string): void {
     if (delta.length === 0) return;
     buffer += delta;
-    if (currentMessageId === null) {
-      scheduleFlush(initialPostDelayMs);
-    } else {
-      scheduleFlush(editDebounceMs);
-    }
+    // Initial-post debounce is short to keep first-token latency low; once
+    // any message has been posted we use the longer edit debounce so the
+    // edit cadence stays inside Discord's per-channel rate bucket. Mid-
+    // stream seal/post sequences flip currentMessageId back to null
+    // briefly — those still want the edit debounce, not the initial one.
+    scheduleFlush(hasPosted ? editDebounceMs : initialPostDelayMs);
   }
 
   async function end(): Promise<void> {
@@ -236,6 +247,7 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
     currentMessageId = null;
     lastSentContent = "";
     ending = false;
+    hasPosted = false;
   }
 
   function getPostedMessageIds(): readonly string[] {
