@@ -7,7 +7,7 @@
  * post if a debug channel is configured, swallow errors so the caller
  * (e.g. a shutdown handler) isn't blocked.
  */
-import type { Client } from "discord.js";
+import { MessageFlags, type Client } from "discord.js";
 import { config } from "../config.ts";
 import { fetchSendableChannel } from "./fetchSendableChannel.ts";
 
@@ -17,6 +17,6 @@ export async function postDebugLine(args: { client: Client; content: string }): 
   const channel = await fetchSendableChannel(client, config.debugChannelId);
   if (!channel) return;
   await channel
-    .send({ content })
+    .send({ content, flags: MessageFlags.SuppressEmbeds })
     .catch((error) => console.error("[debugLogger] lifecycle post failed:", error));
 }

@@ -33,7 +33,7 @@
  * fall back to a link to the channel itself so the entry stays
  * clickable).
  */
-import type { Client, SendableChannels } from "discord.js";
+import { MessageFlags, type Client, type SendableChannels } from "discord.js";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import { config } from "../config.ts";
@@ -169,7 +169,7 @@ export function createDebugLogger(args: {
     const tokensSegment = tokens !== null ? ` · ${formatTokens(tokens)}` : "";
     const text = `-# 🗜️ ${head} context${tokensSegment} · trigger=${reason}`.slice(0, hardCharLimit);
     const sent = await channel
-      .send({ content: text })
+      .send({ content: text, flags: MessageFlags.SuppressEmbeds })
       .catch((error) => {
         console.error("[debugLogger] compaction-start post failed:", error);
         return null;
@@ -220,6 +220,7 @@ export function createDebugLogger(args: {
     await channel
       .send({
         content: text,
+        flags: MessageFlags.SuppressEmbeds,
         // `failIfNotExists: false` demotes the message to a regular post
         // if the start-log was deleted — better than dropping the
         // end-of-compaction notice entirely.
@@ -243,7 +244,7 @@ export function createDebugLogger(args: {
     const usageString = formatToolUsage(args.toolCallId, toolToUsage);
     const text = `-# ${head} ${argString}${usageString}`.slice(0, hardCharLimit);
     const sent = await channel
-      .send({ content: text })
+      .send({ content: text, flags: MessageFlags.SuppressEmbeds })
       .catch((error) => {
         console.error("[debugLogger] tool-start post failed:", error);
         return null;
@@ -259,6 +260,7 @@ export function createDebugLogger(args: {
     await channel
       .send({
         content: text,
+        flags: MessageFlags.SuppressEmbeds,
         // `failIfNotExists: false` demotes the message to a regular post
         // if the original log entry was deleted — better than dropping
         // the failure notice entirely.
