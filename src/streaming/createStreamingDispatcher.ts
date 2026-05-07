@@ -60,8 +60,10 @@ export interface DispatcherConfig {
    */
   initialPostDelayMs?: number;
   /**
-   * Wait this long between edit calls. Default 600ms (under Discord's
-   * ~5-edits-per-5-seconds per-channel bucket).
+   * Wait this long between edit calls. Default 1000ms — matches Discord's
+   * empirical ~5-edits-per-5-seconds per-channel bucket. Setting this
+   * lower piles up requests in discord.js's REST queue (no errors, but
+   * a noticeable pause after a burst once the bucket drains).
    */
   editDebounceMs?: number;
   /**
@@ -93,7 +95,7 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
     softLimit,
     hardLimit,
     initialPostDelayMs = 80,
-    editDebounceMs = 600,
+    editDebounceMs = 1000,
     timer = realTimer,
   } = config;
 
