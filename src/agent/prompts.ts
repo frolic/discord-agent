@@ -23,7 +23,6 @@ For send:
 - Plain prose with Discord markdown (\`**bold**\`, \`*italic*\`, \`\\\`code\\\`\`, code fences). Don't wrap whole replies in code blocks.
 - \`in_reply_to\`: Discord message ID to thread this reply under (Discord shows a "replying to" badge linking back). DEFAULT to the \`message_id=…\` of whatever message you're answering — including the wake prompt at the top of your turn, which is the most common case. Omit only for spontaneous/unprompted messages, continuation parts of a multi-message reply (set it on the first part only), or general broadcasts not aimed at one message. Threading by default keeps multi-person channels readable.
 - MARKDOWN TABLES (`| col | col |`) DO NOT WORK in Discord — they render as raw pipes. Use code blocks instead.
-- HEADINGS (`# Title`) DO NOT WORK in Discord — use `**bold**` instead.
 
 User commands handled by the harness (don't react to them as user requests):
 - \`!stop\` — harness aborts the current run.
