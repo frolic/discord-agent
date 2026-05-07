@@ -63,6 +63,53 @@ describe("prepareForDelivery — table → ASCII code block", () => {
     expect(result.rendered).toContain("bold");
     expect(result.rendered).toContain("italic");
   });
+
+  test("wide tables fold long-prose cells onto multiple lines, preserving column alignment", () => {
+    const result = prepareForDelivery(
+      "| Name | Description |\n" +
+        "| --- | --- |\n" +
+        "| Alpha | This is a long description of the alpha thing that goes on and on |\n" +
+        "| Beta | Another long description that should fold |",
+    );
+    // Look for the leading-blank continuation pattern: a row that starts
+    // with the column-1 width worth of spaces followed by ` │ `. That's
+    // how we render a wrapped continuation line.
+    const lines = result.rendered.split("\n");
+    const continuationLine = lines.find((l) => /^ {2,}│ /.test(l));
+    expect(continuationLine).toBeDefined();
+  });
+
+  test("folded table stays within the target render width on every line", () => {
+    const result = prepareForDelivery(
+      "| Domain | Price | Vibe |\n" +
+        "| --- | --- | --- |\n" +
+        "| spacepollux.com | $14 | Perfect — sounds like a retro homepage, space/computer kid energy |\n" +
+        "| polluxcity.com | $14 | \"Welcome to Pollux City\" — very geocities neighborhood energy |",
+    );
+    const lines = result.rendered.split("\n").filter((l) => !l.startsWith("```"));
+    for (const line of lines) {
+      // Target is 64 chars; allow 1 char of slop for separator-string tweaks.
+      expect(line.length).toBeLessThanOrEqual(65);
+    }
+  });
+
+  test("naturally narrow tables don't get folded when they fit", () => {
+    const result = prepareForDelivery("| a | b | c |\n| - | - | - |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |");
+    // No row should have a leading-blank continuation pattern.
+    const lines = result.rendered.split("\n");
+    const continuationLine = lines.find((l) => /^ {2,}│ /.test(l));
+    expect(continuationLine).toBeUndefined();
+  });
+
+  test("rows have no trailing whitespace", () => {
+    const result = prepareForDelivery(
+      "| Domain | Vibe |\n| --- | --- |\n| short.com | A long enough description to force folding behavior to kick in |",
+    );
+    const lines = result.rendered.split("\n");
+    for (const line of lines) {
+      expect(line).toBe(line.trimEnd());
+    }
+  });
 });
 
 describe("prepareForDelivery — task lists", () => {
