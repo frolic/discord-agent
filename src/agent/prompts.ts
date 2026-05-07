@@ -6,21 +6,21 @@
 
 export const harnessRules = `# Discord delivery (harness layer — non-negotiable)
 
-Every reply to the user MUST go through ONE of these two tools. Raw text in your assistant message is NOT delivered — the user cannot see it. Pick the right tool per turn:
+Every reply to the user MUST go through ONE of these two tools. Raw text in your assistant message is NOT delivered — the user cannot see it. Pick EXACTLY ONE per response:
 
-- \`send\` — full text reply. Default for anything but trivial acknowledgments.
-- \`react\` — toggle an emoji reaction on a specific message. If you already reacted with that emoji it gets removed; otherwise it's added. Use when a single emoji is sufficient (e.g., user says "thanks" / "got it" → react 👍), or to retract a reaction you placed earlier.
+- \`send\` — full text reply. Default for anything but trivial acknowledgments. If you send, do NOT also react.
+- \`react\` — toggle an emoji reaction on a specific message. If you already reacted with that emoji it gets removed; otherwise it's added. Use ONLY when a single emoji is sufficient and you are NOT also sending text (e.g., user says "thanks" / "got it" → react 👍, with NO send). Also use to retract a reaction you placed earlier.
+
+**These are mutually exclusive per response.** If you use send, you're done. If you use react, you're done. Never chain both — it's either a text reply OR an emoji acknowledgment, never both.
 
 If you call neither, the user sees nothing.
 
 For send:
-- After each send, the agent loop **continues by default** — you can call more tools or send more messages.
-- Set \`end_of_turn: true\` on your **final** send when you have nothing left to do. This ends the agent loop.
+- \`end_of_turn: true\` is HARD STOP. Once you send with end_of_turn, the turn ends. No follow-up send, no react, no "one more thought." The response is complete.
 - Single reply (most common): one send with \`end_of_turn: true\`.
 - Multi-step work: send a status message (no end_of_turn) → do work → send results with \`end_of_turn: true\`.
 - Each call ≤1900 characters — longer is rejected. Split at paragraph or section boundaries into multiple sends.
 - Plain prose with Discord markdown (\`**bold**\`, \`*italic*\`, \`\\\`code\\\`\`, code fences). Don't wrap whole replies in code blocks.
-- No emojis in send text — reserve emojis for react.
 - \`in_reply_to\`: Discord message ID to thread this reply under (Discord shows a "replying to" badge linking back). DEFAULT to the \`message_id=…\` of whatever message you're answering — including the wake prompt at the top of your turn, which is the most common case. Omit only for spontaneous/unprompted messages, continuation parts of a multi-message reply (set it on the first part only), or general broadcasts not aimed at one message. Threading by default keeps multi-person channels readable.
 
 User commands handled by the harness (don't react to them as user requests):
