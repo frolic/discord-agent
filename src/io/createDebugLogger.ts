@@ -18,13 +18,13 @@
  * public surface — the wrapper only sees the three logging methods, not
  * the session-event plumbing.
  *
- * Why a separate module from `MessageSender`:
+ * Why a separate module from `DiscordSender`:
  * - Different *target channel* (`config.debugChannelId`, may be unset).
  * - Different *consumer* — only `withToolLogging` calls these methods,
  *   and decoupling the audit interface lets the wrapper depend on a
  *   narrow `DebugLogger` instead of the full harness surface.
  * - Different *failure model* — silently no-ops when no debug channel is
- *   configured, whereas `MessageSender` always has a channel.
+ *   configured, whereas `DiscordSender` always has a channel.
  *
  * Source-message linking: every tool log line is rendered as a markdown
  * link to either the user's wake message (set via `setSourceMessageUrl`
