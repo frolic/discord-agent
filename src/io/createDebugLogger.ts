@@ -33,12 +33,13 @@
  * fall back to a link to the channel itself so the entry stays
  * clickable).
  */
-import { MessageFlags, type Client, type SendableChannels } from "discord.js";
+import type { Client, SendableChannels } from "discord.js";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import { config } from "../config.ts";
 import { extractToolErrorText } from "./extractToolErrorText.ts";
 import { fetchSendableChannel } from "./fetchSendableChannel.ts";
+import { sendDebugMessage } from "./sendDebugMessage.ts";
 import { formatCost } from "./formatCost.ts";
 import { formatTokenLine } from "./formatTokenLine.ts";
 import { formatToolArgs } from "./formatToolArgs.ts";
@@ -168,12 +169,11 @@ export function createDebugLogger(args: {
     const tokens = getContextUsage()?.tokens ?? null;
     const tokensSegment = tokens !== null ? ` · ${formatTokens(tokens)}` : "";
     const text = `-# 🗜️ ${head} context${tokensSegment} · trigger=${reason}`.slice(0, hardCharLimit);
-    const sent = await channel
-      .send({ content: text, flags: MessageFlags.SuppressEmbeds })
-      .catch((error) => {
-        console.error("[debugLogger] compaction-start post failed:", error);
-        return null;
-      });
+    const sent = await sendDebugMessage({
+      channel,
+      content: text,
+      errorContext: "compaction-start post failed",
+    });
     return sent?.id ?? null;
   }
 
@@ -217,18 +217,12 @@ export function createDebugLogger(args: {
     // Await the start-log promise so we get the resolved message ID
     // even if its send was still in flight when this fired.
     const replyTo = startLog ? await startLog : null;
-    await channel
-      .send({
-        content: text,
-        flags: MessageFlags.SuppressEmbeds,
-        // `failIfNotExists: false` demotes the message to a regular post
-        // if the start-log was deleted — better than dropping the
-        // end-of-compaction notice entirely.
-        reply: replyTo
-          ? { messageReference: replyTo, failIfNotExists: false }
-          : undefined,
-      })
-      .catch((error) => console.error("[debugLogger] compaction-end post failed:", error));
+    await sendDebugMessage({
+      channel,
+      content: text,
+      replyTo: replyTo ?? undefined,
+      errorContext: "compaction-end post failed",
+    });
   }
 
   async function postToolStart(args: PostToolStartArgs): Promise<string | null> {
@@ -243,12 +237,11 @@ export function createDebugLogger(args: {
     const argString = formatToolArgs(args.args);
     const usageString = formatToolUsage(args.toolCallId, toolToUsage);
     const text = `-# ${head} ${argString}${usageString}`.slice(0, hardCharLimit);
-    const sent = await channel
-      .send({ content: text, flags: MessageFlags.SuppressEmbeds })
-      .catch((error) => {
-        console.error("[debugLogger] tool-start post failed:", error);
-        return null;
-      });
+    const sent = await sendDebugMessage({
+      channel,
+      content: text,
+      errorContext: "tool-start post failed",
+    });
     return sent?.id ?? null;
   }
 
@@ -257,18 +250,12 @@ export function createDebugLogger(args: {
     if (!channel) return;
     const errorText = extractToolErrorText(args.result);
     const text = `-# ❌ ${args.toolName} failed: ${errorText}`.slice(0, hardCharLimit);
-    await channel
-      .send({
-        content: text,
-        flags: MessageFlags.SuppressEmbeds,
-        // `failIfNotExists: false` demotes the message to a regular post
-        // if the original log entry was deleted — better than dropping
-        // the failure notice entirely.
-        reply: args.replyTo
-          ? { messageReference: args.replyTo, failIfNotExists: false }
-          : undefined,
-      })
-      .catch((error) => console.error("[debugLogger] tool failure post failed:", error));
+    await sendDebugMessage({
+      channel,
+      content: text,
+      replyTo: args.replyTo ?? undefined,
+      errorContext: "tool failure post failed",
+    });
   }
 
   return {
