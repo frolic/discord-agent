@@ -25,13 +25,11 @@
  * Writes are serialized through an internal chain so concurrent settles
  * arrive in order on the displayed message.
  */
+import { createDebounceTimer, type DispatcherTimer } from "./createDebounceTimer.ts";
 import { findSafeSplit } from "./findSafeSplit.ts";
 import { prepareForDelivery } from "./prepareForDelivery.ts";
 
-export interface DispatcherTimer {
-  setTimeout(handler: () => void, ms: number): unknown;
-  clearTimeout(handle: unknown): void;
-}
+export type { DispatcherTimer };
 
 export interface DispatcherConfig {
   /**
@@ -107,8 +105,9 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   let currentMessageId: string | null = null;
   // Last content we sent for currentMessageId — skip redundant edits.
   let lastSentContent = "";
-  // Debounce / initial-post timer handle. One pending flush at a time.
-  let timerHandle: unknown = null;
+  // Single-slot debounce timer with the "one pending callback at a time"
+  // guard. When it fires, the flush is enqueued onto the write chain.
+  const scheduler = createDebounceTimer({ timer, onFire: () => enqueueFlush() });
   // Serial chain so writes settle in order.
   let writeChain: Promise<unknown> = Promise.resolve();
   // Settled list of messages we've created.
@@ -121,14 +120,6 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   // window wrongly drops back to the initial-post debounce, letting
   // edits burst past Discord's per-channel rate bucket.
   let hasPosted = false;
-
-  function scheduleFlush(delay: number): void {
-    if (timerHandle !== null) return; // one pending flush at a time
-    timerHandle = timer.setTimeout(() => {
-      timerHandle = null;
-      enqueueFlush();
-    }, delay);
-  }
 
   function enqueueFlush(): void {
     writeChain = writeChain.then(flushNow).catch((error) => {
@@ -221,15 +212,12 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
     // edit cadence stays inside Discord's per-channel rate bucket. Mid-
     // stream seal/post sequences flip currentMessageId back to null
     // briefly — those still want the edit debounce, not the initial one.
-    scheduleFlush(hasPosted ? editDebounceMs : initialPostDelayMs);
+    scheduler.schedule(hasPosted ? editDebounceMs : initialPostDelayMs);
   }
 
   async function end(): Promise<void> {
     ending = true;
-    if (timerHandle !== null) {
-      timer.clearTimeout(timerHandle);
-      timerHandle = null;
-    }
+    scheduler.clear();
     // Drain: keep flushing until the buffer is empty (or stops shrinking).
     enqueueFlush();
     await writeChain;
@@ -243,10 +231,7 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   }
 
   function reset(): void {
-    if (timerHandle !== null) {
-      timer.clearTimeout(timerHandle);
-      timerHandle = null;
-    }
+    scheduler.clear();
     buffer = "";
     currentMessageId = null;
     lastSentContent = "";
