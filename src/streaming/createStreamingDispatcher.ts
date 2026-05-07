@@ -150,6 +150,14 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
       return;
     }
 
+    // Commit to the slower edit-debounce as soon as we have content to
+    // deliver. If we waited until the post resolved, deltas arriving in
+    // the post's await window would see hasPosted=false and schedule
+    // with the initial-post debounce — bursting edits as soon as the
+    // post lands. Setting it here is sticky-correct: any post we're
+    // about to attempt is no longer the "first contact" delay regime.
+    hasPosted = true;
+
     // Try to seal if we're past the soft limit (in rendered chars).
     if (prep.rendered.length > softLimit) {
       const force = ending || prep.rendered.length > hardLimit;
@@ -167,10 +175,7 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
           }
         } else if (split.keepRendered.length > 0) {
           const result = await post(split.keepRendered);
-          if (result !== null) {
-            messageIds.push(result.messageId);
-            hasPosted = true;
-          }
+          if (result !== null) messageIds.push(result.messageId);
         }
         // Drop the raw chars consumed by `keep`; deltas arriving during
         // the seal-edit (now past `split.rawConsumed` in the buffer) ride
@@ -194,7 +199,6 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
       }
       currentMessageId = result.messageId;
       messageIds.push(result.messageId);
-      hasPosted = true;
       lastSentContent = prep.rendered;
       return;
     }

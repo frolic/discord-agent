@@ -25,14 +25,22 @@ interface FakeTimer {
   flushTimers(): void;
   /** Number of pending timers. */
   pending(): number;
+  /**
+   * Every `setTimeout` delay value the dispatcher has requested, in
+   * order. Lets tests assert which debounce path each scheduling
+   * decision took.
+   */
+  scheduledDelays: number[];
 }
 
 function makeFakeTimer(): { timer: { setTimeout: (fn: () => void, ms: number) => unknown; clearTimeout: (h: unknown) => void }; control: FakeTimer } {
   const handlers = new Map<number, () => void>();
+  const scheduledDelays: number[] = [];
   let nextId = 1;
   return {
     timer: {
-      setTimeout: (fn) => {
+      setTimeout: (fn, ms) => {
+        scheduledDelays.push(ms);
         const id = nextId++;
         handlers.set(id, fn);
         return id;
@@ -48,6 +56,7 @@ function makeFakeTimer(): { timer: { setTimeout: (fn: () => void, ms: number) =>
         for (const [, fn] of all) fn();
       },
       pending: () => handlers.size,
+      scheduledDelays,
     },
   };
 }
@@ -98,6 +107,116 @@ async function settle(control: FakeTimer): Promise<void> {
   }
   throw new Error("settle did not converge");
 }
+
+describe("createStreamingDispatcher — debounce scheduling", () => {
+  test("first delta schedules with the initial-post debounce", async () => {
+    const { dispatcher, control } = makeDispatcher();
+    dispatcher.append("a");
+    expect(control.scheduledDelays).toEqual([10]); // initialPostDelayMs
+    await settle(control);
+  });
+
+  test("subsequent deltas after first post schedule with edit debounce", async () => {
+    const { dispatcher, control } = makeDispatcher();
+    dispatcher.append("a");
+    await settle(control);
+    // Reset the recorded list so we only see what happens next.
+    control.scheduledDelays.length = 0;
+
+    dispatcher.append("b");
+    expect(control.scheduledDelays).toEqual([20]); // editDebounceMs
+    await settle(control);
+  });
+
+  test("rapid deltas during the same debounce window don't re-schedule", async () => {
+    const { dispatcher, control } = makeDispatcher();
+    dispatcher.append("a");
+    dispatcher.append("b");
+    dispatcher.append("c");
+    // Only the first append schedules; later ones see timerHandle != null.
+    expect(control.scheduledDelays).toEqual([10]);
+    await settle(control);
+  });
+
+  test("deltas arriving during the initial post's await schedule with edit debounce, not initial-post debounce", async () => {
+    // The bug: hasPosted flips true only AFTER `await post()` resolves,
+    // so deltas in the await window see hasPosted=false and pick the
+    // short initial-post debounce. That's how the user saw "several edits
+    // within a second" right after the first post landed.
+    let resolvePost: ((v: { messageId: string }) => void) | null = null;
+    const postPromise = new Promise<{ messageId: string }>((r) => {
+      resolvePost = r;
+    });
+    const calls: Call[] = [];
+    const { timer, control } = makeFakeTimer();
+    const dispatcher = createStreamingDispatcher({
+      softLimit: 50,
+      hardLimit: 100,
+      initialPostDelayMs: 10,
+      editDebounceMs: 20,
+      timer,
+      post: async (content) => {
+        calls.push({ type: "post", content });
+        return postPromise;
+      },
+      edit: async (messageId, content) => {
+        calls.push({ type: "edit", messageId, content });
+      },
+    });
+
+    // Step 1: first delta. Schedules initial-post timer.
+    dispatcher.append("a");
+    expect(control.scheduledDelays).toEqual([10]);
+
+    // Step 2: fire the timer. flushNow runs, calls post(), awaits.
+    control.flushTimers();
+    // Drain microtasks so flushNow gets to its `await post()`.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.type).toBe("post");
+
+    // Step 3: with the post still pending, append more deltas. Each new
+    // delta should schedule the next flush with the EDIT debounce (20ms),
+    // not the initial-post debounce (10ms). The bug schedules with 10ms.
+    dispatcher.append("b");
+    // Only the first delta (b) actually schedules — c sees timerHandle set
+    // and returns. So we expect exactly one new entry, and it must be 20.
+    expect(control.scheduledDelays.slice(1)).toEqual([20]);
+
+    dispatcher.append("c");
+    expect(control.scheduledDelays.slice(1)).toEqual([20]);
+
+    // Step 4: resolve the post and let everything settle so the test
+    // doesn't leak a pending promise.
+    resolvePost!({ messageId: "m1" });
+    await settle(control);
+  });
+
+  test("deltas during the seal-then-post sequence schedule with edit debounce", async () => {
+    // Once any post has resolved, hasPosted should stay sticky-true so
+    // the brief currentMessageId=null window after a seal doesn't drop
+    // back into the initial-post debounce.
+    const { dispatcher, control } = makeDispatcher({ softLimit: 30, hardLimit: 100 });
+
+    // Get past the first post.
+    dispatcher.append("first");
+    await settle(control);
+    control.scheduledDelays.length = 0;
+
+    // Push past softLimit so the next flush seals + posts a new message.
+    dispatcher.append("\n\n" + "second paragraph that goes well past the soft limit so we trigger a seal");
+    // The append schedules with editDebounceMs (20).
+    expect(control.scheduledDelays).toEqual([20]);
+    await settle(control);
+
+    // Now any further deltas — even though seal/post may have toggled
+    // currentMessageId — should still schedule with editDebounceMs.
+    control.scheduledDelays.length = 0;
+    dispatcher.append(" more text");
+    expect(control.scheduledDelays).toEqual([20]);
+    await settle(control);
+  });
+});
 
 describe("createStreamingDispatcher — basic flow", () => {
   test("first delta posts; subsequent deltas edit", async () => {
