@@ -16,7 +16,7 @@
  */
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { DiscordSender } from "../io/createDiscordSender.ts";
-import type { StreamingDispatcher } from "./createStreamingDispatcher.ts";
+import type { StreamingDispatcher } from "../streaming/createStreamingDispatcher.ts";
 
 export function installStreamingSender(args: {
   session: AgentSession;

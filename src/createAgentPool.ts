@@ -46,7 +46,7 @@ import { formatMessage } from "./formatMessage.ts";
 import { buildPromptOptions } from "./agent/buildPromptOptions.ts";
 import { harnessRules } from "./agent/prompts.ts";
 import { withToolLogging } from "./agent/withToolLogging.ts";
-import { installStreamingSender } from "./streaming/installStreamingSender.ts";
+import { installStreamingSender } from "./agent/installStreamingSender.ts";
 import { installActiveTracker } from "./active/installActiveTracker.ts";
 import type { ActiveTracker } from "./active/createActiveTracker.ts";
 
