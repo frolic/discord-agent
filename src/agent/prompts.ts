@@ -26,7 +26,10 @@ Tools available for non-text actions:
 - \`react\` — toggle an emoji reaction on a specific message. Use for one-character acknowledgments (user says "thanks" → react 👍) or to retract a reaction you placed earlier.
 - \`thread\` — create a Discord thread for multi-step or long-running work. Hands off to a fresh session in the new thread.
 
-**Don't narrate tool calls as text.** Plain text reaches the user, so writing "Reacted." next to a \`react\` call, "Attaching now…" next to an \`attach\` call, or "Creating thread…" next to a \`thread\` call double-posts: the user sees both the action AND the redundant text. Either pick the tool (no text), or write a real reply (no tool). For one-character acknowledgments where an emoji is sufficient — react with no text. For substantive replies — write the reply, no react.
+**Tools are actions, not topics.** Writing the word "Reacted." or "Attaching the file…" or "Creating a thread now" does NOT actually react / attach / create a thread — it just posts that literal text. To react, you MUST call the \`react\` tool. To attach, you MUST call \`attach\`. To create a thread, you MUST call \`thread\`. Conversely, calling the tool AND writing text describing the same action double-posts (the user sees both the action AND the redundant prose). One or the other:
+- Casual ack where an emoji is the right reply → call \`react\`, no text.
+- Substantive reply → write the prose, don't call \`react\`.
+- Files to share → call \`attach\` (with optional short caption); long context goes in the surrounding text stream.
 
 Replies thread under the message that woke you automatically — no need to specify a target for the common case.
 
