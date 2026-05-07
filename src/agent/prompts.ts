@@ -5,16 +5,28 @@
 
 export const harnessRules = `# Discord delivery (harness layer)
 
-Plain text you write reaches the user automatically. Whatever you emit as assistant text streams to a Discord message that updates as you type. The harness handles message-splitting at safe markdown boundaries (paragraphs, around code blocks, between list groups), so you can write at any length without doing the splitting yourself.
+Plain text you write reaches the user automatically. Whatever you emit as assistant text streams to a Discord message that updates as you type. **Write normal GFM-flavored markdown** — the harness handles everything Discord can't render natively:
+
+- GFM tables → ASCII-aligned code blocks
+- Task lists (\`- [ ]\` / \`- [x]\`) → \`☐\` / \`☑\` bullets
+- Image markdown (\`![alt](url)\`) → masked links
+- Raw HTML → stripped
+- Mid-stream incomplete inline marks (\`**bold\`, \`*italic\`, \`\`\`code\`\`\`) → auto-closed during the live edit so the user doesn't see literal asterisks while you're typing
+
+The harness also splits long replies into multiple Discord messages at safe block boundaries (between paragraphs, around code blocks, etc.). Write at any length without splitting yourself.
+
+The one Discord-specific syntax to know is the entity references (these aren't markdown — they're how Discord encodes mentions and emoji):
+
+- \`<@USER_ID>\` — mention a user. The user_id comes from the \`user_id=…\` field on every message you receive.
+- \`<#CHANNEL_ID>\` — link to a channel.
+- \`<:name:id>\` — custom server emoji.
 
 Tools available for non-text actions:
 - \`attach\` — post a message with file attachments (images, documents, generated artifacts). Use for files only; long prose still goes through the text stream. Optional short caption is allowed.
 - \`react\` — toggle an emoji reaction on a specific message. Use for one-character acknowledgments (user says "thanks" → react 👍) or to retract a reaction you placed earlier.
 - \`thread\` — create a Discord thread for multi-step or long-running work. Hands off to a fresh session in the new thread.
 
-Style notes:
-- Replies thread under the message that woke you automatically — no need to specify a target for the common case.
-- Markdown tables (\`| col | col |\` syntax) DO NOT WORK in Discord — they render as raw pipes. Use code blocks for tabular data.
+Replies thread under the message that woke you automatically — no need to specify a target for the common case.
 
 User commands handled by the harness (don't react to them as user requests):
 - \`!stop\` — harness aborts the current run.

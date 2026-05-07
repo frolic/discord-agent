@@ -1,27 +1,32 @@
 /**
  * Drives the "stream assistant text into edited Discord messages" loop.
  *
- * The dispatcher receives text deltas from the agent runtime and turns them
- * into Discord writes:
+ * The dispatcher receives raw text deltas from the agent runtime and
+ * turns them into Discord writes:
  *
- *   1. First delta arrives → post a new Discord message after a short
+ *   1. Each flush: run the raw buffer through `prepareForDelivery`
+ *      (remend → remark parse → transforms → stringify), yielding the
+ *      Discord-ready string and a list of top-level block boundaries.
+ *   2. First flush of a stream → post a new Discord message after a short
  *      debounce, so a flurry of fast deltas batch into a single send.
- *   2. Subsequent deltas → edit the same Discord message on a longer
- *      debounce (Discord's per-channel edit bucket is small).
- *   3. Buffer outgrows the soft limit → call `findSafeSplit` to find the
- *      latest paragraph seam outside any fenced code block; edit the
- *      current message down to `keep`, leave `carryOver` in the buffer
- *      so the next flush posts it as a new message. This is the rollback
- *      case: the displayed message may have already shown content past
- *      the seam (we showed it optimistically); the edit walks it back.
- *   4. End of stream → cancel debouncers, flush until empty.
+ *   3. Subsequent flushes → edit the same message on a longer debounce
+ *      (Discord's per-channel edit bucket is small).
+ *   4. Rendered length crosses the soft limit → `findSafeSplit` picks
+ *      the latest block boundary at-or-before the limit. The current
+ *      message gets edited down to `keepRendered` (potentially shorter
+ *      than what was just shown — the rollback case), the raw buffer is
+ *      sliced past `rawConsumed`, and the next flush posts the rest as
+ *      a fresh message.
+ *   5. End of stream → cancel debouncers, flush until empty (forced
+ *      fallbacks engage so within-block splits eventually drain).
  *
- * The Discord side is injected as `post` / `edit` callbacks so this module
- * is pure logic and can be unit-tested by recording calls. Writes are
- * serialized through an internal chain so concurrent settles arrive in
- * order on the displayed message.
+ * The Discord side is injected as `post` / `edit` callbacks so this
+ * module is pure logic and can be unit-tested by recording calls.
+ * Writes are serialized through an internal chain so concurrent settles
+ * arrive in order on the displayed message.
  */
 import { findSafeSplit } from "./findSafeSplit.ts";
+import { prepareForDelivery } from "./prepareForDelivery.ts";
 
 export interface DispatcherTimer {
   setTimeout(handler: () => void, ms: number): unknown;
@@ -125,50 +130,52 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
 
   async function flushNow(): Promise<void> {
     if (buffer.length === 0) return;
-    // Discord rejects whitespace-only content. Drop and bail out — the
-    // model is between meaningful tokens.
     if (buffer.trim().length === 0) {
+      // Discord rejects whitespace-only content; drop the chunk.
       buffer = "";
       return;
     }
 
-    // Try to seal if we're past the soft limit.
-    if (buffer.length > softLimit) {
-      const sealedAtLen = buffer.length;
-      const force = ending || sealedAtLen > hardLimit;
-      const split = findSafeSplit(buffer, { softLimit, hardLimit, force });
+    const prep = prepareForDelivery(buffer);
+    if (prep.rendered.length === 0) {
+      buffer = "";
+      return;
+    }
+
+    // Try to seal if we're past the soft limit (in rendered chars).
+    if (prep.rendered.length > softLimit) {
+      const force = ending || prep.rendered.length > hardLimit;
+      const split = findSafeSplit(prep, { softLimit, hardLimit, force });
       if (split !== null) {
         // Seal current message (or post split.keep fresh if no current).
         if (currentMessageId !== null) {
-          if (split.keep !== lastSentContent && split.keep.length > 0) {
+          if (split.keepRendered !== lastSentContent && split.keepRendered.length > 0) {
             try {
-              await edit(currentMessageId, split.keep);
-              lastSentContent = split.keep;
+              await edit(currentMessageId, split.keepRendered);
+              lastSentContent = split.keepRendered;
             } catch (error) {
               console.error("[streaming] seal-edit failed:", error);
             }
           }
-        } else if (split.keep.length > 0) {
-          const result = await post(split.keep);
+        } else if (split.keepRendered.length > 0) {
+          const result = await post(split.keepRendered);
           if (result !== null) messageIds.push(result.messageId);
         }
-        // Capture deltas that arrived during the seal-edit await.
-        const tail = buffer.slice(sealedAtLen);
-        buffer = split.carryOver + tail;
+        // Drop the raw chars consumed by `keep`; deltas arriving during
+        // the seal-edit (now past `split.rawConsumed` in the buffer) ride
+        // through naturally.
+        buffer = buffer.slice(split.rawConsumed);
         currentMessageId = null;
         lastSentContent = "";
-        // Continue draining: the new buffer may itself need sealing or
-        // posting. Chain another flush.
         if (buffer.length > 0) enqueueFlush();
         return;
       }
-      // No clean seam at this size and not forced. Fall through to a
-      // regular edit; we'll try again on the next delta.
+      // No clean seam and not forced. Fall through and just edit/post
+      // with what we have; we'll try again on the next delta.
     }
 
     if (currentMessageId === null) {
-      const content = buffer;
-      const result = await post(content);
+      const result = await post(prep.rendered);
       if (result === null) {
         // Post failed — drop the chunk to avoid a stuck retry loop.
         buffer = "";
@@ -176,20 +183,14 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
       }
       currentMessageId = result.messageId;
       messageIds.push(result.messageId);
-      lastSentContent = content;
-      // If late deltas arrived during post, the residual buffer (anything
-      // beyond `content`) is what actually represents "unsent" content.
-      // We sent the snapshot; everything past it is still pending.
-      buffer = content + buffer.slice(content.length);
-      // (No-op assignment, but documents the invariant.)
+      lastSentContent = prep.rendered;
       return;
     }
 
-    if (buffer === lastSentContent) return;
-    const content = buffer;
+    if (prep.rendered === lastSentContent) return;
     try {
-      await edit(currentMessageId, content);
-      lastSentContent = content;
+      await edit(currentMessageId, prep.rendered);
+      lastSentContent = prep.rendered;
     } catch (error) {
       console.error("[streaming] edit failed:", error);
       // Leave lastSentContent unchanged so the next flush retries.

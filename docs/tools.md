@@ -34,13 +34,19 @@ ones. The trade-off in giving the agent unrestricted shell and
 filesystem access is power vs blast radius — the assumption is a
 trusted home rather than a hostile sandbox.
 
-- **Plain text streams to Discord automatically.** Whatever the agent
-  emits as assistant text appears in a channel message that updates as
-  the response generates. The harness handles the per-message 2000-char
-  cap by splitting at safe markdown boundaries — paragraphs, around code
-  blocks, between list groups — and rolls back optimistically-shown
-  content if the buffer crosses the limit while inside an open construct.
-  Implementation: [`../src/streaming/findSafeSplit.ts`](../src/streaming/findSafeSplit.ts) and
+- **Plain text streams to Discord automatically.** The agent writes
+  standard GFM-flavored markdown — the format any LLM naturally produces
+  — and the harness translates the bits Discord can't render before
+  posting: tables become ASCII-aligned code blocks, task lists become
+  `☐` / `☑` bullets, image markdown becomes masked links, raw HTML is
+  stripped, and incomplete inline marks (mid-stream `**bold`) are
+  auto-closed by [`remend`](https://github.com/vercel/streamdown/tree/main/packages/remend)
+  so the live edit doesn't show literal asterisks.
+  Long replies split at safe top-level block boundaries (between
+  paragraphs, around code blocks, between list groups, etc.). The full
+  pipeline is in [`../src/streaming/prepareForDelivery.ts`](../src/streaming/prepareForDelivery.ts)
+  with seam selection in [`../src/streaming/findSafeSplit.ts`](../src/streaming/findSafeSplit.ts)
+  and the post/edit driver in
   [`../src/streaming/createStreamingDispatcher.ts`](../src/streaming/createStreamingDispatcher.ts).
 - **`attach(files, content?, in_reply_to?)`** — post a Discord message
   with file attachments (≤24MB each, ≤10 per message). Optional caption
@@ -74,13 +80,24 @@ so a flurry of fast tokens batch into a single send; subsequent deltas
 edit the same message on a longer debounce (Discord's per-channel edit
 bucket is small).
 
-When the buffer outgrows what one Discord message can hold,
-[`findSafeSplit`](../src/streaming/findSafeSplit.ts) walks for the latest
-paragraph seam outside any fenced code block. The current message is
-edited down to that seam (potentially shorter than what's currently
-displayed — the rollback case) and the carry-over starts a fresh
-message. Line / word / hard fallbacks kick in only when the buffer is
-past the hard limit or the stream has ended without a clean seam.
+On every flush, the raw buffer goes through `prepareForDelivery`:
+[`remend`](https://github.com/vercel/streamdown/tree/main/packages/remend)
+closes any unfinished inline marks at the suffix, [`remark`](https://www.npmjs.com/package/remark)
++ [`remark-gfm`](https://www.npmjs.com/package/remark-gfm) parses the
+result into an mdast AST, transform visitors rewrite tables / task
+lists / images / HTML / `__bold__`, and `remark-stringify` emits each
+top-level block back to markdown — accumulating both the rendered text
+and a list of (rawStart, rawEnd, renderedStart, renderedEnd) per block.
+
+When the rendered length outgrows what one Discord message can hold,
+[`findSafeSplit`](../src/streaming/findSafeSplit.ts) picks the latest
+top-level block boundary at-or-before the soft limit. The current
+message is edited down to the seal point (potentially shorter than
+what's currently displayed — the rollback case) and the raw buffer
+slices past the consumed offset so the carry-over re-renders fresh on
+the next message. Forced fallbacks (within-block word boundary, code-
+fence close-and-reopen, hard cut) kick in only when the buffer is past
+the hard limit or the stream has ended without a clean seam.
 
 The first streamed message of an agent run threads under the user
 message that woke the run; later messages don't, so a multi-step turn

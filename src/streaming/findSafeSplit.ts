@@ -1,254 +1,168 @@
 /**
- * Markdown-aware message splitter for streaming Discord messages.
+ * Pick a safe seam in a prepared delivery payload.
  *
- * As assistant text streams in we accumulate it in a buffer and edit a single
- * Discord message. When the buffer outgrows what one Discord message can hold,
- * we need to seal the message and continue in a new one — but the seal point
- * has to fall on a markdown boundary, never inside a fenced code block, list,
- * blockquote, table, or any other formatting that would render broken if
- * split mid-construct.
+ * The hard part of "split this stream into Discord messages" is choosing
+ * a place that won't cut a markdown construct mid-flight. Now that the
+ * caller hands us a `PreparedDelivery` with explicit top-level block
+ * boundaries (each block is a paragraph, code block, list, blockquote,
+ * heading, etc.), seam selection is mostly bookkeeping:
  *
- * The "seal" is potentially a rollback: the displayed message may already
- * contain more text than the seam allows (we showed it optimistically as it
- * streamed). After the split we re-edit the previous message down to `keep`
- * and post `carryOver` as the new message. The discord-side caller handles
- * those two writes; this function is pure.
+ *   1. The boundary BETWEEN any two top-level blocks is always safe — by
+ *      construction, the first block is a complete construct and the
+ *      second begins a fresh one. Pick the latest such boundary at-or-
+ *      before the soft limit.
+ *   2. If no clean boundary fits and the caller forces a split (buffer
+ *      past hard limit, or stream has ended), fall back to within-block
+ *      cuts: word boundary inside a paragraph, or close-and-reopen-fence
+ *      inside a code block. Code-block splits preserve the language.
+ *   3. If even that fails, hard-cut at the rendered hard limit.
  *
- * # Seam policy
- *
- * 1. **Paragraph seam** (preferred) — a run of two-or-more newlines with
- *    `keep` ending on a non-empty paragraph and `carryOver` starting on a
- *    non-empty paragraph, both outside any open fenced code block. List
- *    runs, blockquote runs, and table rows have no blank lines between
- *    items, so a paragraph seam never falls inside one.
- *
- * 2. **Line seam outside code** (fallback, force only) — any newline
- *    outside a fenced code block. Used only when the buffer has no
- *    paragraph seam and we MUST split (caller passed `force: true`,
- *    typically because the buffer is past the hard limit or streaming
- *    has ended).
- *
- * 3. **Word-boundary cut** (fallback, force only) — last whitespace
- *    boundary at or before the hard limit. Last resort before mid-word
- *    truncation.
- *
- * 4. **Hard cut at hardLimit** — the absolute fallback. Mid-word, possibly
- *    mid-fence; the result is ugly but the bytes fit.
- *
- * Inline marks (`**bold**`, `*italic*`, `__underline__`, `~~strike~~`,
- * `||spoiler||`, single-backtick inline code) are not tracked — well-formed
- * markdown closes them within a paragraph, so a paragraph seam never falls
- * inside one. If the upstream content leaves them open across a paragraph
- * break, the markdown is already broken before we touch it.
+ * Result is expressed in BOTH rendered and raw terms — the dispatcher
+ * needs the rendered slice to send to Discord and the raw slice to
+ * truncate its buffer for subsequent deltas.
  */
+import type { PreparedDelivery } from "./prepareForDelivery.ts";
 
 export interface SplitOptions {
-  /**
-   * Try to seal at a paragraph seam at-or-before this position. Picked to
-   * leave headroom under the hard limit so the surrounding edits can run
-   * without racing the next delta past the cap.
-   */
+  /** Try to seal at a block boundary at-or-before this rendered offset. */
   softLimit: number;
-  /**
-   * The split's `keep` must never exceed this many characters. Discord's
-   * per-message cap is 2000; production callers should pass ~1990 to leave
-   * a margin for trailing whitespace trimming and provider drift.
-   */
+  /** The seal's `keepRendered` must never exceed this. */
   hardLimit: number;
-  /**
-   * When true, the function MUST return a split (cascading through line and
-   * word fallbacks down to a hard cut). When false, returns null if no
-   * paragraph seam exists at-or-before softLimit — the caller should keep
-   * accumulating deltas and try again.
-   */
+  /** When true, MUST return a split (cascading through within-block fallbacks). */
   force?: boolean;
 }
 
 export interface SplitResult {
-  /** Content for the current Discord message. ≤ hardLimit chars. */
-  keep: string;
-  /** Content to start the next Discord message with. May be empty. */
-  carryOver: string;
+  /** Rendered text for the current Discord message. ≤ hardLimit chars. */
+  keepRendered: string;
+  /** Raw chars consumed up to and including the seam. The dispatcher slices
+   *  its raw buffer at this offset so the next flush starts fresh. */
+  rawConsumed: number;
 }
 
 /**
- * Find a safe split point in `text` per the policy above. Returns null only
- * when `force` is false AND no paragraph seam exists ≤ softLimit. Whitespace
- * around the seam is trimmed so neither side has stray leading/trailing
- * blank lines.
+ * Find a safe split in `prep`. Returns null only when `force` is false AND
+ * no block boundary lands at-or-before softLimit.
  */
-export function findSafeSplit(text: string, options: SplitOptions): SplitResult | null {
+export function findSafeSplit(prep: PreparedDelivery, options: SplitOptions): SplitResult | null {
   const { softLimit, hardLimit, force = false } = options;
-  if (text.length === 0) return null;
+  if (prep.rendered.length === 0) return null;
 
-  const seams = collectSeams(text);
-
-  const paragraph = pickLatestAtOrBefore(seams.paragraphsOutsideCode, softLimit);
-  if (paragraph !== null) return splitAt(text, paragraph);
+  const seamIndex = pickLatestBoundary(prep, softLimit);
+  if (seamIndex !== null) {
+    const seamBlock = prep.blocks[seamIndex]!;
+    return {
+      keepRendered: prep.rendered.slice(0, seamBlock.renderedEnd).trimEnd(),
+      rawConsumed: seamBlock.rawEnd,
+    };
+  }
 
   if (!force) return null;
 
-  // Forced fallbacks — try to land somewhere that at least respects line
-  // structure and stays outside an open fenced code block.
-  const lineOut = pickLatestAtOrBefore(seams.linesOutsideCode, hardLimit);
-  if (lineOut !== null && lineOut > 0) return splitAt(text, lineOut);
-
-  const word = lastWordBoundaryAtOrBefore(text, hardLimit);
-  if (word !== null && word > 0) return splitAt(text, word);
-
-  // Absolute fallback: hard cut at the limit. May fall mid-fence; the
-  // streaming caller will reopen the fence on the next message if needed.
-  const cut = Math.min(hardLimit, text.length);
-  return splitAt(text, cut);
-}
-
-interface Seams {
-  paragraphsOutsideCode: number[];
-  linesOutsideCode: number[];
-}
-
-/**
- * Walk the text once, recording seam offsets. A "paragraph seam" is a
- * position where the prefix ends a paragraph and the suffix begins one,
- * with the boundary outside any fenced code block. A "line seam" is any
- * newline boundary outside a fenced code block.
- *
- * The seam offset is the index in `text` at which the carry-over begins.
- * `splitAt` then trims trailing whitespace off keep and leading whitespace
- * off carryOver so the seam itself doesn't show as a blank line.
- */
-function collectSeams(text: string): Seams {
-  const paragraphsOutsideCode: number[] = [];
-  const linesOutsideCode: number[] = [];
-
-  let inCode = false;
-  let codeFenceChar: "`" | "~" | null = null;
-  let codeFenceLen = 0;
-
-  let lineStart = 0;
-  // The virtual "before-the-text" line counts as blank so the very first
-  // line of the doc never gets recorded as a paragraph seam.
-  let prevLineBlank = true;
-  let i = 0;
-
-  while (i <= text.length) {
-    const atEnd = i === text.length;
-    const ch = atEnd ? "\n" : text[i]; // treat EOF as a final line break
-
-    if (ch === "\n" || atEnd) {
-      const lineEnd = i;
-      const lineText = text.slice(lineStart, lineEnd);
-
-      const fence = matchFenceLine(lineText);
-      if (fence) {
-        if (!inCode) {
-          inCode = true;
-          codeFenceChar = fence.char;
-          codeFenceLen = fence.len;
-        } else if (
-          fence.char === codeFenceChar &&
-          fence.len >= codeFenceLen &&
-          fence.trailingIsBlank
-        ) {
-          inCode = false;
-          codeFenceChar = null;
-          codeFenceLen = 0;
-        }
-      }
-
-      const isBlank = lineText.trim().length === 0;
-      const seamPos = lineEnd + (atEnd ? 0 : 1); // start of next line
-
-      // Line seam: every newline outside code is a candidate.
-      if (!atEnd && !inCode) linesOutsideCode.push(seamPos);
-
-      // Paragraph seam: this line is blank, outside code, and the previous
-      // line was non-blank — i.e., the prefix just ended a paragraph. The
-      // seam offset (`seamPos`) is the start of the line AFTER the blank,
-      // so trimming `keep` collapses the trailing newlines cleanly.
-      // Multiple consecutive blank lines collapse: only the first blank
-      // line in the run gets recorded; later blanks would produce
-      // equivalent results after trimming.
-      if (isBlank && !inCode && !prevLineBlank) {
-        paragraphsOutsideCode.push(seamPos);
-      }
-
-      prevLineBlank = isBlank;
-      lineStart = lineEnd + 1;
-    }
-    i++;
+  // Forced fallbacks. Find the block that straddles `hardLimit`; cut
+  // inside it.
+  const overflowing = prep.blocks.find(
+    (b) => b.renderedStart < hardLimit && b.renderedEnd > softLimit,
+  );
+  if (overflowing) {
+    return forceSplitInsideBlock(prep, overflowing, options);
   }
 
-  return { paragraphsOutsideCode, linesOutsideCode };
+  // No block straddles — buffer is short or weirdly shaped. Hard-cut.
+  return hardCut(prep, hardLimit);
 }
 
-interface FenceMatch {
-  char: "`" | "~";
-  len: number;
-  /** True if everything after the fence run on this line is whitespace. */
-  trailingIsBlank: boolean;
-}
-
-/**
- * Match a fenced code-block marker line. Allows up to 3 leading spaces
- * (CommonMark). The fence is at least 3 of the same character (` or ~).
- * For a closing fence we also require the line have nothing but
- * whitespace after the run; openers may carry a language hint.
- */
-function matchFenceLine(line: string): FenceMatch | null {
-  const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-  if (!match) return null;
-  const run = match[1]!;
-  const trailing = match[2] ?? "";
-  return {
-    char: run[0] as "`" | "~",
-    len: run.length,
-    trailingIsBlank: trailing.trim().length === 0,
-  };
-}
-
-function pickLatestAtOrBefore(positions: number[], limit: number): number | null {
+function pickLatestBoundary(prep: PreparedDelivery, softLimit: number): number | null {
+  // The boundary AFTER block i is at rendered offset `blocks[i].renderedEnd`.
+  // We want the latest i whose renderedEnd ≤ softLimit AND there exists at
+  // least one block AFTER it (otherwise sealing here means "send everything"
+  // — no carry-over needed, no split actually required).
   let best: number | null = null;
-  for (const pos of positions) {
-    if (pos > limit) break;
-    best = pos;
+  for (let i = 0; i < prep.blocks.length - 1; i++) {
+    const block = prep.blocks[i]!;
+    if (block.renderedEnd > softLimit) break;
+    best = i;
   }
   return best;
 }
 
-function lastWordBoundaryAtOrBefore(text: string, limit: number): number | null {
-  const cap = Math.min(limit, text.length);
-  for (let i = cap; i > 0; i--) {
-    const ch = text[i - 1];
+function forceSplitInsideBlock(
+  prep: PreparedDelivery,
+  block: PreparedDelivery["blocks"][number],
+  options: SplitOptions,
+): SplitResult {
+  const { hardLimit } = options;
+  // For a code block, split with close-fence-and-reopen so the rendered
+  // output stays valid markdown on both sides.
+  if (block.node.type === "code") {
+    return forceSplitCode(prep, block, hardLimit);
+  }
+  // Paragraphs / lists / blockquotes: fall back to a word boundary inside
+  // the rendered slice.
+  return forceSplitText(prep, block, hardLimit);
+}
+
+function forceSplitCode(
+  prep: PreparedDelivery,
+  block: PreparedDelivery["blocks"][number],
+  hardLimit: number,
+): SplitResult {
+  const fenceClose = "\n```";
+  // Aim the close so the resulting message length ≤ hardLimit.
+  // Walk back from hardLimit to a newline boundary inside the rendered
+  // block so we don't slice mid-line.
+  const cap = Math.min(hardLimit - fenceClose.length, block.renderedEnd);
+  const cutAt = lastNewlineInBlock(prep.rendered, block.renderedStart, cap);
+  const keepRendered = prep.rendered.slice(0, cutAt) + fenceClose;
+  // Map rendered cut → raw. Inside a fenced code block, rendered and raw
+  // have the same content between fences, so the offset delta from the
+  // block's render start is a good approximation of the offset delta
+  // from its raw start. Caps at rawEnd so we never consume past the
+  // block; the next flush re-prepares the carry-over and the open fence
+  // is re-derived from the trailing raw chars.
+  const renderedOffsetInBlock = cutAt - block.renderedStart;
+  const rawConsumed = Math.min(block.rawStart + renderedOffsetInBlock, block.rawEnd);
+  return { keepRendered, rawConsumed };
+}
+
+function forceSplitText(
+  prep: PreparedDelivery,
+  block: PreparedDelivery["blocks"][number],
+  hardLimit: number,
+): SplitResult {
+  const cap = Math.min(hardLimit, block.renderedEnd);
+  const cutAt = lastWordBoundary(prep.rendered, block.renderedStart, cap);
+  // Map rendered cut → raw. Within a paragraph the only transforms that
+  // change length are emphasis normalization (`__` → `**`, same count)
+  // and image-to-link (rare), so 1:1 offset mapping is close enough for
+  // the next flush to re-render cleanly.
+  const renderedOffsetInBlock = cutAt - block.renderedStart;
+  const rawConsumed = Math.min(block.rawStart + renderedOffsetInBlock, block.rawEnd);
+  return {
+    keepRendered: prep.rendered.slice(0, cutAt).trimEnd(),
+    rawConsumed,
+  };
+}
+
+function hardCut(prep: PreparedDelivery, hardLimit: number): SplitResult {
+  const cap = Math.min(hardLimit, prep.rendered.length);
+  return {
+    keepRendered: prep.rendered.slice(0, cap),
+    rawConsumed: cap,
+  };
+}
+
+function lastNewlineInBlock(rendered: string, blockStart: number, cap: number): number {
+  for (let i = cap; i > blockStart; i--) {
+    if (rendered[i - 1] === "\n") return i;
+  }
+  return cap;
+}
+
+function lastWordBoundary(rendered: string, blockStart: number, cap: number): number {
+  for (let i = cap; i > blockStart; i--) {
+    const ch = rendered[i - 1];
     if (ch === " " || ch === "\t" || ch === "\n") return i;
   }
-  return null;
-}
-
-function splitAt(text: string, position: number): SplitResult {
-  const rawKeep = text.slice(0, position);
-  const rawCarry = text.slice(position);
-  const keep = trimEnd(rawKeep);
-  const carryOver = trimStart(rawCarry);
-  return { keep, carryOver };
-}
-
-function trimEnd(text: string): string {
-  let end = text.length;
-  while (end > 0) {
-    const ch = text[end - 1];
-    if (ch !== " " && ch !== "\t" && ch !== "\n" && ch !== "\r") break;
-    end--;
-  }
-  return text.slice(0, end);
-}
-
-function trimStart(text: string): string {
-  let start = 0;
-  while (start < text.length) {
-    const ch = text[start];
-    if (ch !== " " && ch !== "\t" && ch !== "\n" && ch !== "\r") break;
-    start++;
-  }
-  return text.slice(start);
+  return cap;
 }
