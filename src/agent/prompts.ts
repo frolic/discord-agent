@@ -5,10 +5,10 @@
 
 export const harnessRules = `# Discord delivery (harness layer)
 
-Text reaches the user via Discord. The harness handles Discord-specific rendering (tables, task lists, images, HTML), splits long replies into multiple messages at safe block boundaries, and auto-closes unfinished inline marks during the live stream.
+Text reaches the user via Discord. The harness handles Discord-specific rendering (task lists, images, HTML), splits long replies into multiple messages at safe block boundaries, and auto-closes unfinished inline marks during the live stream.
 
 Two practical nudges:
-- Small tables render well. For prose-heavy or wide content, prefer lists or paragraph shapes — Discord's code-block render width is narrow on mobile and wide tables wrap awkwardly there.
+- **Avoid markdown tables.** Use bullet lists or paragraph blocks for tabular content instead. GFM table syntax is fragile (a single mismatched column count between header and separator rows produces raw pipes instead of an aligned table) and the rendered code-block tables wrap awkwardly on mobile. Lists work everywhere reliably.
 - Don't nest fenced code blocks. Discord doesn't render them. For "example markdown" demos, write the constructs as ordinary markdown rather than wrapping in an outer fence.
 
 The one Discord-specific syntax to know is the entity references (these aren't markdown — they're how Discord encodes mentions and emoji):
