@@ -54,7 +54,11 @@ export interface DispatcherConfig {
    */
   hardLimit: number;
   /**
-   * Wait this long after the first delta of a stream before posting. Default 80ms.
+   * Wait this long after the first delta of a stream before posting.
+   * Default 1000ms — long enough that a fast stream batches a useful
+   * chunk into the initial post (avoiding 4-char "Hi! " messages that
+   * land before the model has actually said anything). Slow / stalled
+   * streams still post within this window so silence isn't unbounded.
    */
   initialPostDelayMs?: number;
   /**
@@ -92,7 +96,7 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
     edit,
     softLimit,
     hardLimit,
-    initialPostDelayMs = 80,
+    initialPostDelayMs = 1000,
     editDebounceMs = 1000,
     timer = realTimer,
   } = config;
