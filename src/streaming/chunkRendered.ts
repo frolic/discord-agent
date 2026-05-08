@@ -34,10 +34,11 @@
  *        - **Paragraphs / lists / blockquotes** split at the latest
  *          word boundary in the rendered text.
  *
- * Inter-block separator follows `prep.rendered` — `\n` for code-adjacent
- * transitions, `\n\n` elsewhere — which is already in `prep.rendered`'s
- * substring offsets, so we just slice between block boundaries and trim
- * leading/trailing whitespace per chunk.
+ * Inter-block separator handling: when consecutive blocks land in the
+ * same chunk, we slice `prep.rendered` directly — that string already
+ * has the right separator (`\n` for code-adjacent, `\n\n` elsewhere)
+ * because `prepareForDelivery` placed it. The chunker doesn't re-pick
+ * separators; the source of truth is the rendered string itself.
  */
 import type { Code, RootContent } from "mdast";
 import type { PreparedDelivery } from "./prepareForDelivery.ts";
@@ -58,62 +59,67 @@ export function chunkRendered(prep: PreparedDelivery, options: ChunkOptions): st
   if (prep.blocks.length === 0) return [];
 
   const chunks: string[] = [];
-  // Accumulate rendered text for the in-progress chunk. Mutated as we
-  // add blocks; flushed to `chunks` when full or at heading boundaries.
-  let current = "";
-  // Type of the most recent block in `current` (for separator picking).
-  let prevBlock: RootContent | null = null;
+  // We track the current chunk as a half-open run [runStart, runEnd) of
+  // rendered offsets. Slicing prep.rendered over this run gives us the
+  // chunk text — including the inter-block separators that
+  // `prepareForDelivery` already placed (`\n` for code-adjacent
+  // transitions, `\n\n` elsewhere). No need to re-pick separators here;
+  // we let the source of truth (the rendered string) speak for itself.
+  let runStart = -1;
+  let runEnd = -1;
 
-  function commit(): void {
-    const trimmed = current.replace(/[ \t\n]+$/, "");
+  function commitRun(): void {
+    if (runStart < 0) return;
+    const text = prep.rendered.slice(runStart, runEnd).replace(/[ \t\n]+$/, "");
+    if (text.length > 0) chunks.push(text);
+    runStart = -1;
+    runEnd = -1;
+  }
+
+  function commitString(s: string): void {
+    const trimmed = s.replace(/[ \t\n]+$/, "");
     if (trimmed.length > 0) chunks.push(trimmed);
-    current = "";
-    prevBlock = null;
   }
 
   for (let i = 0; i < prep.blocks.length; i++) {
     const block = prep.blocks[i]!;
-    const blockText = prep.rendered.slice(block.renderedStart, block.renderedEnd);
 
     // Heading-led chunks: a heading-like block always starts its own
-    // Discord message (when there's content already accumulated to
-    // finalize). Models treat headings as section breaks; sealing on
-    // those reads naturally.
-    if (current.length > 0 && isHeadingLike(block.node)) {
-      commit();
+    // Discord message (when there's a run accumulated to finalize).
+    if (runStart >= 0 && isHeadingLike(block.node)) {
+      commitRun();
     }
 
-    const sep = current.length > 0 ? separatorBetween(prevBlock!, block.node) : "";
-    const candidate = current + sep + blockText;
+    // What does extending the current run to include this block look like?
+    const candidateStart = runStart < 0 ? block.renderedStart : runStart;
+    const candidateLen = block.renderedEnd - candidateStart;
 
-    if (candidate.length <= hardLimit) {
-      current = candidate;
-      prevBlock = block.node;
+    if (candidateLen <= hardLimit) {
+      runStart = candidateStart;
+      runEnd = block.renderedEnd;
       continue;
     }
 
-    // Doesn't fit. Finalize current first, then handle this block.
-    commit();
+    // Doesn't fit. Finalize the run, then handle this block.
+    commitRun();
 
-    if (blockText.length <= hardLimit) {
-      current = blockText;
-      prevBlock = block.node;
+    const blockLen = block.renderedEnd - block.renderedStart;
+    if (blockLen <= hardLimit) {
+      runStart = block.renderedStart;
+      runEnd = block.renderedEnd;
       continue;
     }
 
-    // Block alone is too big. Split it across multiple chunks.
-    const blockChunks = splitOversizedBlock(block.node, blockText, hardLimit);
-    // First N-1 chunks go straight to output; last becomes the new
-    // current so subsequent blocks can append to it if they fit.
-    for (let j = 0; j < blockChunks.length - 1; j++) {
-      const c = blockChunks[j]!.replace(/[ \t\n]+$/, "");
-      if (c.length > 0) chunks.push(c);
-    }
-    current = blockChunks[blockChunks.length - 1] ?? "";
-    prevBlock = block.node;
+    // Block alone is too big. Split it across multiple chunks. The
+    // splitter helpers build their own strings (fences, header repeat,
+    // word-boundary cuts), so we commit each one as a finished string
+    // rather than as a slice of `prep.rendered`.
+    const blockText = prep.rendered.slice(block.renderedStart, block.renderedEnd);
+    const subChunks = splitOversizedBlock(block.node, blockText, hardLimit);
+    for (const sc of subChunks) commitString(sc);
   }
 
-  commit();
+  commitRun();
   return chunks;
 }
 
@@ -272,17 +278,4 @@ function isHeadingLike(node: RootContent): boolean {
     return true;
   }
   return false;
-}
-
-/**
- * Inter-block separator. Mirrors `prepareForDelivery.separatorBetween`
- * since we re-pick separators for chunks (we don't blindly slice
- * separator chars from `prep.rendered` — they're between blocks but a
- * chunk boundary may fall there). Code-adjacent transitions get a
- * single newline (the code block's own padding handles visual gap);
- * everything else gets a blank line.
- */
-function separatorBetween(prev: RootContent, next: RootContent): string {
-  if (prev.type === "code" || next.type === "code") return "\n";
-  return "\n\n";
 }
