@@ -116,7 +116,8 @@ export function prepareForDelivery(rawBuffer: string): PreparedDelivery {
   const renderedParts: string[] = [];
   let renderedCursor = 0;
 
-  for (const child of tree.children) {
+  for (let i = 0; i < tree.children.length; i++) {
+    const child = tree.children[i]!;
     const text = stringifyBlock(child);
     const renderedStart = renderedCursor;
     const renderedEnd = renderedStart + text.length;
@@ -129,15 +130,30 @@ export function prepareForDelivery(rawBuffer: string): PreparedDelivery {
     });
     renderedParts.push(text);
     renderedCursor = renderedEnd;
-    // Two-newline separator between blocks. Tracked in rendered offsets
-    // so seam picking accounts for it; not added after the final block.
-    if (child !== tree.children[tree.children.length - 1]) {
-      renderedParts.push("\n\n");
-      renderedCursor += 2;
+    const next = tree.children[i + 1];
+    if (next) {
+      const sep = separatorBetween(child, next);
+      renderedParts.push(sep);
+      renderedCursor += sep.length;
     }
   }
 
   return { rendered: renderedParts.join(""), blocks };
+}
+
+/**
+ * Pick the inter-block separator. Default is `\n\n` (one blank line —
+ * needed for paragraph separation and to break lists/blockquotes out
+ * of lazy continuation). Drop to `\n` when either side is a fenced
+ * code block: the code block already renders with its own top/bottom
+ * padding in Discord, so an explicit blank line on top of that
+ * compounds visually into ~1.5x the spacing the model intended. The
+ * closing fence is unambiguous, so the parser still breaks correctly
+ * with just a single newline.
+ */
+function separatorBetween(prev: RootContent, next: RootContent): string {
+  if (prev.type === "code" || next.type === "code") return "\n";
+  return "\n\n";
 }
 
 function stringifyBlock(node: RootContent): string {

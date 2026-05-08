@@ -47,7 +47,9 @@ describe("findSafeSplit — block boundaries", () => {
     const prep = prepareForDelivery("intro\n\n```ts\nconst x = 1;\n```\n\nouter");
     const result = findSafeSplit(prep, opts({ softLimit: 200, hardLimit: 200 }));
     expect(result?.keepRendered).toMatch(/```\s*$/);
-    expect(result?.keepRendered.startsWith("intro\n\n```ts")).toBe(true);
+    // Code blocks get a single-newline separator (not blank-line) since
+    // Discord's code-block chrome already provides visual separation.
+    expect(result?.keepRendered.startsWith("intro\n```ts")).toBe(true);
   });
 
   test("rollback: code block too big, must seal before its open fence", () => {

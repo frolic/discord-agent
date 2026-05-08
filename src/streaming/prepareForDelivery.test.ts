@@ -1,6 +1,41 @@
 import { describe, expect, test } from "bun:test";
 import { prepareForDelivery } from "./prepareForDelivery.ts";
 
+describe("prepareForDelivery — block separators", () => {
+  test("paragraph → paragraph uses a blank line separator", () => {
+    const result = prepareForDelivery("first\n\nsecond");
+    expect(result.rendered).toBe("first\n\nsecond");
+  });
+
+  test("paragraph → code drops the blank line (code block has its own visual padding)", () => {
+    const result = prepareForDelivery("intro\n\n```\ncode\n```");
+    // Single newline between intro and the opening fence, not a blank line.
+    expect(result.rendered).toBe("intro\n```\ncode\n```");
+  });
+
+  test("code → paragraph drops the blank line on the other side too", () => {
+    const result = prepareForDelivery("```\ncode\n```\n\nouter");
+    expect(result.rendered).toBe("```\ncode\n```\nouter");
+  });
+
+  test("paragraph → code → paragraph drops both adjacent blank lines", () => {
+    const result = prepareForDelivery("intro\n\n```\ncode\n```\n\nouter");
+    expect(result.rendered).toBe("intro\n```\ncode\n```\nouter");
+  });
+
+  test("two adjacent code blocks use single newline between them", () => {
+    const result = prepareForDelivery("```js\na\n```\n\n```ts\nb\n```");
+    expect(result.rendered).toBe("```js\na\n```\n```ts\nb\n```");
+  });
+
+  test("non-code transitions still use blank lines", () => {
+    // Lists need blank-line separators or lazy-continuation rules fold the
+    // following paragraph into the list. We don't shorten these.
+    const result = prepareForDelivery("intro\n\n- item\n- item\n\nouter");
+    expect(result.rendered).toBe("intro\n\n- item\n- item\n\nouter");
+  });
+});
+
 describe("prepareForDelivery — basic shape", () => {
   test("empty input → empty result", () => {
     const result = prepareForDelivery("");
