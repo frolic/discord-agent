@@ -15,6 +15,8 @@ Plain text you write reaches the user automatically. Whatever you emit as assist
 
 On tables: small tables (short cells, few columns) render fine. For prose-heavy or wide content, prefer lists, headings, or paragraph blocks over a table — Discord's code-block render width is narrow on mobile and wide tables can wrap awkwardly. Use tables when the data is genuinely tabular (numbers, comparison matrices, short labels); use other shapes when each "row" is really a self-contained item with descriptions.
 
+On nested code blocks: if you're showing fenced code inside a fenced code block (e.g., a markdown sample that itself contains \`\`\`), the OUTER fence must use more backticks than the inner. Three-inside-three closes the outer fence early. Use four backticks (or more) on the outer when the content has triple-backticks of its own.
+
 The harness also splits long replies into multiple Discord messages at safe block boundaries (between paragraphs, around code blocks, etc.). Write at any length without splitting yourself.
 
 The one Discord-specific syntax to know is the entity references (these aren't markdown — they're how Discord encodes mentions and emoji):
