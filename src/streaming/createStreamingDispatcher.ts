@@ -126,9 +126,24 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   let hasPosted = false;
 
   function enqueueFlush(): void {
-    writeChain = writeChain.then(flushNow).catch((error) => {
-      console.error("[streaming] write chain settled with error:", error);
-    });
+    writeChain = writeChain
+      .then(async () => {
+        const bufferBefore = buffer;
+        await flushNow();
+        // After the flush settles, rebase the next tick to fire
+        // editDebounceMs from NOW (flush completion), not from the next
+        // delta. Cancels any timer a delta armed during the flush's
+        // await so the cadence is "~1s between flushes" instead of
+        // drifting with REST latency. Skip when ending — end() drives
+        // its own drain loop without debounce.
+        if (buffer !== bufferBefore && !ending) {
+          scheduler.clear();
+          scheduler.schedule(editDebounceMs);
+        }
+      })
+      .catch((error) => {
+        console.error("[streaming] write chain settled with error:", error);
+      });
   }
 
   async function flushNow(): Promise<void> {

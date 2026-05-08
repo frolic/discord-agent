@@ -192,6 +192,75 @@ describe("createStreamingDispatcher — debounce scheduling", () => {
     await settle(control);
   });
 
+  test("after flush settles with content changes during the await, the timer is rebased to fire from flush completion", async () => {
+    // The interval-style cadence: when a flush settles, the next tick
+    // should fire editDebounceMs from THAT moment, not from the most
+    // recent delta. We force a delta-armed timer to land DURING a
+    // flush's await, then verify the post-flush rebase replaces it
+    // (clears + re-schedules) so the cadence isn't drifted by REST
+    // latency.
+    let resolvePost: ((v: { messageId: string }) => void) | null = null;
+    const postPromise = new Promise<{ messageId: string }>((r) => {
+      resolvePost = r;
+    });
+    const calls: Call[] = [];
+    const { timer, control } = makeFakeTimer();
+    const dispatcher = createStreamingDispatcher({
+      softLimit: 50,
+      hardLimit: 100,
+      initialPostDelayMs: 10,
+      editDebounceMs: 20,
+      timer,
+      post: async (content) => {
+        calls.push({ type: "post", content });
+        return postPromise;
+      },
+      edit: async (messageId, content) => {
+        calls.push({ type: "edit", messageId, content });
+      },
+    });
+
+    dispatcher.append("a");
+    control.flushTimers();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    // During the post's await, append more content. This arms a timer
+    // (delta-armed) for editDebounceMs from now. scheduledDelays now
+    // has [10 (initial), 20 (delta-armed during await)].
+    dispatcher.append("b");
+    expect(control.scheduledDelays).toEqual([10, 20]);
+
+    // Resolve the post. After the await resolves, the post-flush
+    // re-arm logic notices buffer changed (b appended during the
+    // await) and calls scheduler.clear() + scheduler.schedule(20).
+    // That cancels the delta-armed timer and arms a fresh one — the
+    // rebase. scheduledDelays gets a third entry of 20.
+    resolvePost!({ messageId: "m1" });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(control.scheduledDelays).toEqual([10, 20, 20]);
+
+    await settle(control);
+  });
+
+  test("flush that consumed everything (no deltas during await) doesn't re-arm — next delta drives the next cycle", async () => {
+    // If nothing changes during a flush's await, there's no work left
+    // — the next delta should arm fresh, not the post-flush re-arm.
+    const { dispatcher, control } = makeDispatcher();
+    dispatcher.append("a");
+    await settle(control);
+    // Reset what we record so the next phase is clean.
+    control.scheduledDelays.length = 0;
+
+    // Stream pauses (no append). Settle drives no further work.
+    await settle(control);
+    expect(control.scheduledDelays).toEqual([]);
+
+    // New delta arrives. Arms fresh.
+    dispatcher.append("b");
+    expect(control.scheduledDelays).toEqual([20]);
+    await settle(control);
+  });
+
   test("deltas during the seal-then-post sequence schedule with edit debounce", async () => {
     // Once any post has resolved, hasPosted should stay sticky-true so
     // the brief currentMessageId=null window after a seal doesn't drop
