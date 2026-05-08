@@ -40,6 +40,25 @@ const separatorWidth = 3;
 const columnSeparator = " │ ";
 const separatorJoiner = "─┼─";
 
+/**
+ * Marker we attach to the output Code node so the chunker can recognize
+ * it as a transformed table — and chunk it at row boundaries with the
+ * header repeated on each piece, instead of treating it as a generic
+ * code block where mid-line cuts orphan rows.
+ *
+ * `headerLines` is the rendered ASCII header + separator (each chunk
+ * needs to start with these). `bodyRowLines` groups visual lines per
+ * logical row — when a cell wraps, one logical row becomes multiple
+ * visual lines, and the chunker needs to keep those grouped so a row
+ * never gets cut down the middle of a wrapped cell.
+ */
+export interface HarnessTableData {
+  /** Rendered ASCII header + separator (these prefix every chunk). */
+  headerLines: string[];
+  /** Rendered ASCII rows, grouped by logical row (one entry per row). */
+  bodyRowLines: string[][];
+}
+
 export function tableToCode(table: Table): Code {
   const rows = table.children.map((row) => row.children.map((cell) => cellToText(cell.children)));
   const align = table.align ?? [];
@@ -52,23 +71,31 @@ export function tableToCode(table: Table): Code {
   const naturalWidths = computeNaturalWidths(rows, numCols);
   const widths = allocateColumnWidths(naturalWidths, numCols);
 
-  const lines: string[] = [];
+  const headerLines: string[] = [];
+  const bodyRowLines: string[][] = [];
   const [header, ...body] = rows;
   if (header) {
-    lines.push(...formatRow(header, widths, align));
-    lines.push(formatSeparator(widths, align));
+    headerLines.push(...formatRow(header, widths, align));
+    headerLines.push(formatSeparator(widths, align));
   }
   for (const row of body) {
-    lines.push(...formatRow(row, widths, align));
+    bodyRowLines.push(formatRow(row, widths, align));
   }
 
-  return {
+  const tableData: HarnessTableData = { headerLines, bodyRowLines };
+  const flatBodyLines = bodyRowLines.flat();
+  const code: Code = {
     type: "code",
     lang: null,
     meta: null,
-    value: lines.join("\n"),
+    value: [...headerLines, ...flatBodyLines].join("\n"),
     position: table.position,
   };
+  // unist Node supports a `data` field for custom metadata; mdast's Code
+  // type inherits it. The chunker reads this back when it has to split
+  // the table across messages.
+  (code as { data?: { harnessTable?: HarnessTableData } }).data = { harnessTable: tableData };
+  return code;
 }
 
 function makeEmptyCode(table?: Table): Code {

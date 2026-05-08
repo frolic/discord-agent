@@ -24,9 +24,6 @@ import {
 
 /** Discord's per-message cap is 2000; leave a small margin. */
 const hardCharLimit = 1990;
-/** Try to seal at a paragraph seam by this size. Picked to leave room for
- * the seal-edit itself plus a delta racing in during the seal. */
-const softCharLimit = 1700;
 
 export interface OpenStreamOptions {
   /** Discord message ID this stream's first message should reply-thread under. */
@@ -125,7 +122,6 @@ export function createDiscordSender(args: { client: Client; channelId: string })
   function openStream(options: OpenStreamOptions): StreamingDispatcher {
     let isFirstPost = true;
     return createStreamingDispatcher({
-      softLimit: softCharLimit,
       hardLimit: hardCharLimit,
       post: async (content) => {
         const message = await enqueue(() =>

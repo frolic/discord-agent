@@ -1,28 +1,28 @@
 /**
  * Drives the "stream assistant text into edited Discord messages" loop.
  *
- * The mental model:
+ * Mental model: as deltas arrive we accumulate the FULL stream source
+ * from the start. Each flush re-parses the whole accumulated buffer
+ * through `prepareForDelivery`, runs `chunkRendered` over it to derive
+ * one rendered string per Discord message, and reconciles those chunks
+ * against the messages we've already posted:
  *
- *   - On a delta, append to a raw-markdown buffer and arm a single-slot
- *     timer (no-op if one is already armed). When the timer fires, the
- *     buffer is rendered through `prepareForDelivery` and either posted
- *     as a new Discord message or edited onto the current one.
- *   - When the rendered length crosses `softLimit`, `findSafeSplit`
- *     picks a safe block boundary; the current message is edited down
- *     to that seam (potentially shorter than what's currently shown —
- *     the rollback case), and the carry-over starts a fresh message.
- *   - After each flush settles, if more work piled up during the await
- *     (new deltas, or seal carry-over), we re-arm the timer so it fires
- *     `flushIntervalMs` from flush completion. Gives a "~1s between flush
- *     completions" cadence instead of debounce-after-delta drift.
- *   - End-of-stream drains the buffer immediately (no debounce), running
- *     forced fallbacks if a single huge block needs within-block splitting.
+ *   - If chunk[i] is unchanged from `messages[i].lastSent`: skip (no edit).
+ *   - If chunk[i] differs: edit `messages[i]` with the new content.
+ *   - If chunks are longer than `messages.length`: post the new ones.
  *
- * The Discord side is injected as `post` / `edit` callbacks so this
- * module is pure logic; tests record calls. Writes are serialized
- * through an internal chain so concurrent settles arrive in order.
+ * Sealed messages stabilize naturally — once the stream content past a
+ * chunk boundary stops shifting that boundary, the sealed chunk's text
+ * stops changing and the diff-skip avoids redundant edits. We never
+ * destructively slice the buffer, so context for re-deriving chunks
+ * (table headers, code-block fences, etc.) is always intact.
+ *
+ * The flush timer fires on a single-slot debounce: armed by deltas,
+ * re-armed after each flush completes if the buffer changed during the
+ * await. Gives a "~flushIntervalMs between flushes" cadence regardless
+ * of REST latency drift.
  */
-import { findSafeSplit } from "./findSafeSplit.ts";
+import { chunkRendered } from "./chunkRendered.ts";
 import { prepareForDelivery } from "./prepareForDelivery.ts";
 
 export interface DispatcherTimer {
@@ -35,16 +35,13 @@ export interface DispatcherConfig {
   post: (content: string) => Promise<{ messageId: string } | null>;
   /** Edit an existing Discord message. Rejection is logged; next delta retries. */
   edit: (messageId: string, content: string) => Promise<void>;
-  /** Try-paragraph-seam target. Once exceeded with a clean seam, the dispatcher splits. */
-  softLimit: number;
-  /** Absolute per-message cap; once exceeded, the splitter forces a within-block split. */
+  /** Absolute per-message render-character cap. Discord's is 2000; production passes ~1990. */
   hardLimit: number;
   /**
    * Wait this long before firing each flush. Default 1000ms — matches
-   * Discord's empirical ~5-edits-per-5-seconds per-channel bucket, and
+   * Discord's empirical ~5-edits-per-5-seconds per-channel bucket and
    * batches enough content into the initial post so first-message
-   * latency doesn't show as "Hi! " (4 chars) before the model has
-   * actually said anything.
+   * latency doesn't show a 4-char tease.
    */
   flushIntervalMs?: number;
   /** Timer source. Tests inject a fake clock for deterministic scheduling. */
@@ -52,7 +49,7 @@ export interface DispatcherConfig {
 }
 
 export interface StreamingDispatcher {
-  /** Append a delta. Arms the flush timer if not already pending. */
+  /** Append a delta to the accumulated source. Arms the flush timer if not already pending. */
   append(delta: string): void;
   /** End the stream. Drains pending content immediately; resolves on settle. */
   end(): Promise<void>;
@@ -67,32 +64,28 @@ const realTimer: DispatcherTimer = {
   clearTimeout: (handle) => globalThis.clearTimeout(handle as Parameters<typeof clearTimeout>[0]),
 };
 
-export function createStreamingDispatcher(config: DispatcherConfig): StreamingDispatcher {
-  const {
-    post,
-    edit,
-    softLimit,
-    hardLimit,
-    flushIntervalMs = 1000,
-    timer = realTimer,
-  } = config;
+interface DiscordMessage {
+  id: string;
+  /** Last rendered content we sent to this Discord message — skip-edit check. */
+  lastSent: string;
+}
 
-  // Pending raw-markdown content. Every flush renders this through
-  // prepareForDelivery and either posts it or edits the current message.
-  let buffer = "";
-  // The Discord message currently being edited; null before first post
-  // and again briefly after a seal until the next flush posts the carry-over.
-  let currentMessageId: string | null = null;
-  // Last rendered text we sent for currentMessageId — skips redundant edits.
-  let lastSentContent = "";
-  // Single-slot flush timer. Armed by deltas (if not pending) and re-armed
-  // after a flush settles when more work piled up during the await.
+export function createStreamingDispatcher(config: DispatcherConfig): StreamingDispatcher {
+  const { post, edit, hardLimit, flushIntervalMs = 1000, timer = realTimer } = config;
+
+  // Full source from start of stream, never sliced. Each flush re-parses
+  // the entire thing and re-derives chunks; sealed messages stabilize
+  // via the lastSent diff-skip.
+  let accumulatedRaw = "";
+  // The Discord messages this dispatcher has posted, in order. We post
+  // a new one when chunks exceed `messages.length`; we edit when
+  // chunk[i] differs from `messages[i].lastSent`.
+  const messages: DiscordMessage[] = [];
+  // Single-slot flush timer.
   let timerHandle: unknown = null;
   // Serial chain so writes settle in display order.
   let writeChain: Promise<unknown> = Promise.resolve();
-  // Settled list of messages we've created.
-  const messageIds: string[] = [];
-  // True while end() is draining; forces seal fallbacks even mid-construct.
+  // True while end() is draining.
   let ending = false;
 
   function startTimer(): void {
@@ -112,14 +105,13 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   function enqueueFlush(): void {
     writeChain = writeChain
       .then(async () => {
-        const bufferBefore = buffer;
+        const rawBefore = accumulatedRaw;
         await flushNow();
-        // Rebase the next tick to fire flushIntervalMs from THIS flush's
-        // completion, not from the next delta. If a delta armed a
-        // timer during the flush's await, replace it; otherwise this
-        // is just the post-flush re-arm. Either way, the cadence is
-        // "flushIntervalMs after each flush settles" rather than drifting.
-        if (buffer !== bufferBefore && !ending) {
+        // Re-arm if more deltas arrived during the flush. Cancel any
+        // delta-armed timer first so the next tick fires
+        // flushIntervalMs from THIS flush's completion (not from the
+        // most recent delta) — predictable cadence.
+        if (accumulatedRaw !== rawBefore && !ending) {
           stopTimer();
           startTimer();
         }
@@ -130,104 +122,63 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   }
 
   async function flushNow(): Promise<void> {
-    if (buffer.length === 0) return;
-    if (buffer.trim().length === 0) {
-      // Discord rejects whitespace-only content; drop the chunk.
-      buffer = "";
-      return;
-    }
+    if (accumulatedRaw.length === 0) return;
+    if (accumulatedRaw.trim().length === 0) return;
 
-    const prep = prepareForDelivery(buffer);
-    if (prep.rendered.length === 0) {
-      buffer = "";
-      return;
-    }
+    const prep = prepareForDelivery(accumulatedRaw);
+    const chunks = chunkRendered(prep, { hardLimit });
+    if (chunks.length === 0) return;
 
-    // Try to seal if we're past the soft limit (in rendered chars).
-    if (prep.rendered.length > softLimit) {
-      const force = ending || prep.rendered.length > hardLimit;
-      const split = findSafeSplit(prep, { softLimit, hardLimit, force });
-      if (split !== null) {
-        if (currentMessageId !== null) {
-          if (split.keepRendered !== lastSentContent && split.keepRendered.length > 0) {
-            try {
-              await edit(currentMessageId, split.keepRendered);
-              lastSentContent = split.keepRendered;
-            } catch (error) {
-              console.error("[streaming] seal-edit failed:", error);
-            }
-          }
-        } else if (split.keepRendered.length > 0) {
-          const result = await post(split.keepRendered);
-          if (result !== null) messageIds.push(result.messageId);
-        }
-        // Drop the raw chars consumed by `keep`; deltas arriving during
-        // the seal-edit (now past `split.rawConsumed` in the buffer) ride
-        // through naturally.
-        buffer = buffer.slice(split.rawConsumed);
-        currentMessageId = null;
-        lastSentContent = "";
-        if (buffer.length > 0) enqueueFlush();
-        return;
+    // Reconcile: edit-or-skip the overlap with existing messages, post
+    // the tail.
+    const overlap = Math.min(chunks.length, messages.length);
+    for (let i = 0; i < overlap; i++) {
+      const desired = chunks[i]!;
+      const message = messages[i]!;
+      if (desired === message.lastSent) continue;
+      try {
+        await edit(message.id, desired);
+        message.lastSent = desired;
+      } catch (error) {
+        console.error("[streaming] edit failed:", error);
+        // Leave lastSent unchanged so the next flush retries.
       }
-      // No clean seam and not forced. Fall through and edit/post with
-      // what we have; the next delta will trigger another attempt.
     }
-
-    if (currentMessageId === null) {
-      const result = await post(prep.rendered);
+    for (let i = overlap; i < chunks.length; i++) {
+      const desired = chunks[i]!;
+      const result = await post(desired);
       if (result === null) {
-        // Post failed — drop the chunk to avoid a stuck retry loop.
-        buffer = "";
+        // Post failed — bail out. Subsequent posts would land out of
+        // order. Next flush will try again.
         return;
       }
-      currentMessageId = result.messageId;
-      messageIds.push(result.messageId);
-      lastSentContent = prep.rendered;
-      return;
-    }
-
-    if (prep.rendered === lastSentContent) return;
-    try {
-      await edit(currentMessageId, prep.rendered);
-      lastSentContent = prep.rendered;
-    } catch (error) {
-      console.error("[streaming] edit failed:", error);
-      // Leave lastSentContent unchanged so the next flush retries.
+      messages.push({ id: result.messageId, lastSent: desired });
     }
   }
 
   function append(delta: string): void {
     if (delta.length === 0) return;
-    buffer += delta;
+    accumulatedRaw += delta;
     startTimer();
   }
 
   async function end(): Promise<void> {
     ending = true;
     stopTimer();
-    // Drain: keep flushing until the buffer is empty (or stops shrinking).
     enqueueFlush();
     await writeChain;
-    while (buffer.length > 0) {
-      const before = buffer.length;
-      enqueueFlush();
-      await writeChain;
-      if (buffer.length >= before) break;
-    }
     ending = false;
   }
 
   function reset(): void {
     stopTimer();
-    buffer = "";
-    currentMessageId = null;
-    lastSentContent = "";
+    accumulatedRaw = "";
+    messages.length = 0;
     ending = false;
   }
 
   function getPostedMessageIds(): readonly string[] {
-    return messageIds;
+    return messages.map((m) => m.id);
   }
 
   return { append, end, reset, getPostedMessageIds };
