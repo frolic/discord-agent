@@ -35,7 +35,7 @@ export function createRestartSelfTool(args: {
     name: "restart_self",
     label: "restart self",
     description:
-      "Exit the bot process. The supervisor (systemd, Docker, wrapper script) will respawn with current source. Use after editing your own framework code, or as a recovery hatch if state is stuck. WARNING: if no supervisor is running, the bot will not come back. Do NOT send a confirmation message via the `send` tool before calling this — the harness automatically reacts 🔄 to the user's message as the ack.",
+      "Exit the bot process. The supervisor (systemd, Docker, wrapper script) will respawn with current source. Use after editing your own framework code, or as a recovery hatch if state is stuck. WARNING: if no supervisor is running, the bot will not come back. Do NOT write a confirmation message before calling this — the harness automatically reacts 🔄 to the user's message as the ack, and any streamed text would race the process exit.",
     // Sequential execution + terminate: true means a parallel-emitted second
     // call is dropped before it runs — the framework halts after the first
     // result. Without this, two parallel calls both fire execute() and both

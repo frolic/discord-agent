@@ -18,13 +18,13 @@
  * public surface — the wrapper only sees the three logging methods, not
  * the session-event plumbing.
  *
- * Why a separate module from `MessageSender`:
+ * Why a separate module from `DiscordSender`:
  * - Different *target channel* (`config.debugChannelId`, may be unset).
  * - Different *consumer* — only `withToolLogging` calls these methods,
  *   and decoupling the audit interface lets the wrapper depend on a
  *   narrow `DebugLogger` instead of the full harness surface.
  * - Different *failure model* — silently no-ops when no debug channel is
- *   configured, whereas `MessageSender` always has a channel.
+ *   configured, whereas `DiscordSender` always has a channel.
  *
  * Source-message linking: every tool log line is rendered as a markdown
  * link to either the user's wake message (set via `setSourceMessageUrl`
@@ -39,6 +39,7 @@ import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import { config } from "../config.ts";
 import { extractToolErrorText } from "./extractToolErrorText.ts";
 import { fetchSendableChannel } from "./fetchSendableChannel.ts";
+import { sendDebugMessage } from "./sendDebugMessage.ts";
 import { formatCost } from "./formatCost.ts";
 import { formatTokenLine } from "./formatTokenLine.ts";
 import { formatToolArgs } from "./formatToolArgs.ts";
@@ -168,12 +169,11 @@ export function createDebugLogger(args: {
     const tokens = getContextUsage()?.tokens ?? null;
     const tokensSegment = tokens !== null ? ` · ${formatTokens(tokens)}` : "";
     const text = `-# 🗜️ ${head} context${tokensSegment} · trigger=${reason}`.slice(0, hardCharLimit);
-    const sent = await channel
-      .send({ content: text })
-      .catch((error) => {
-        console.error("[debugLogger] compaction-start post failed:", error);
-        return null;
-      });
+    const sent = await sendDebugMessage({
+      channel,
+      content: text,
+      errorContext: "compaction-start post failed",
+    });
     return sent?.id ?? null;
   }
 
@@ -217,17 +217,12 @@ export function createDebugLogger(args: {
     // Await the start-log promise so we get the resolved message ID
     // even if its send was still in flight when this fired.
     const replyTo = startLog ? await startLog : null;
-    await channel
-      .send({
-        content: text,
-        // `failIfNotExists: false` demotes the message to a regular post
-        // if the start-log was deleted — better than dropping the
-        // end-of-compaction notice entirely.
-        reply: replyTo
-          ? { messageReference: replyTo, failIfNotExists: false }
-          : undefined,
-      })
-      .catch((error) => console.error("[debugLogger] compaction-end post failed:", error));
+    await sendDebugMessage({
+      channel,
+      content: text,
+      replyTo: replyTo ?? undefined,
+      errorContext: "compaction-end post failed",
+    });
   }
 
   async function postToolStart(args: PostToolStartArgs): Promise<string | null> {
@@ -242,12 +237,11 @@ export function createDebugLogger(args: {
     const argString = formatToolArgs(args.args);
     const usageString = formatToolUsage(args.toolCallId, toolToUsage);
     const text = `-# ${head} ${argString}${usageString}`.slice(0, hardCharLimit);
-    const sent = await channel
-      .send({ content: text })
-      .catch((error) => {
-        console.error("[debugLogger] tool-start post failed:", error);
-        return null;
-      });
+    const sent = await sendDebugMessage({
+      channel,
+      content: text,
+      errorContext: "tool-start post failed",
+    });
     return sent?.id ?? null;
   }
 
@@ -256,17 +250,12 @@ export function createDebugLogger(args: {
     if (!channel) return;
     const errorText = extractToolErrorText(args.result);
     const text = `-# ❌ ${args.toolName} failed: ${errorText}`.slice(0, hardCharLimit);
-    await channel
-      .send({
-        content: text,
-        // `failIfNotExists: false` demotes the message to a regular post
-        // if the original log entry was deleted — better than dropping
-        // the failure notice entirely.
-        reply: args.replyTo
-          ? { messageReference: args.replyTo, failIfNotExists: false }
-          : undefined,
-      })
-      .catch((error) => console.error("[debugLogger] tool failure post failed:", error));
+    await sendDebugMessage({
+      channel,
+      content: text,
+      replyTo: args.replyTo ?? undefined,
+      errorContext: "tool failure post failed",
+    });
   }
 
   return {

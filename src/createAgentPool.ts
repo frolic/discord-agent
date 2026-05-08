@@ -1,20 +1,22 @@
 /**
- * Per-channel AgentSession pool with envelope-tool enforcement.
+ * Per-channel AgentSession pool with streaming text delivery.
  *
  * One PoolEntry per active channel/thread; the pool lazily acquires entries
  * on first contact and evicts them on idle/cap pressure. Each entry
  * wires three I/O subsystems on top of a fresh agent session:
  *
- * - `MessageSender` — the bot's outbound user-channel writes (the
- *   `send` tool, error/fallback paths).
+ * - `DiscordSender` — the bot's outbound user-channel writes: streamed
+ *   text dispatchers, file attachments via the `attach` tool, error
+ *   surfacing.
  * - `DebugLogger` — operational logging in the debug channel; subscribes
  *   to `message_end` for usage tracking.
  * - `TypingIndicator` — the typing-dots UX, self-contained.
  *
  * Each subsystem owns a narrow slice; `withToolLogging` only sees the
- * `DebugLogger`, the send tool only sees the `MessageSender`. The
- * envelope-enforcement loop adds the silent-turn retry and runaway
- * counter on top — see `installEnvelopeEnforcement.ts`.
+ * `DebugLogger`, the attach tool only sees the `DiscordSender`. The
+ * streaming-sender install (`installStreamingSender`) routes assistant
+ * text deltas into the sender and surfaces errors that fall outside the
+ * normal tool path.
  */
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -31,10 +33,10 @@ import {
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import { config } from "./config.ts";
-import { createMessageSender, type MessageSender } from "./io/createMessageSender.ts";
+import { createDiscordSender, type DiscordSender } from "./io/createDiscordSender.ts";
 import { createDebugLogger, type DebugLogger } from "./io/createDebugLogger.ts";
 import { installTypingIndicator } from "./io/installTypingIndicator.ts";
-import { createSendTool } from "./tools/send.ts";
+import { createAttachTool } from "./tools/attach.ts";
 import { createReactTool } from "./tools/react.ts";
 import { createHistoryTool } from "./tools/history.ts";
 import { createThreadTool } from "./tools/thread.ts";
@@ -43,8 +45,8 @@ import { collectImageAttachments } from "./collectImageAttachments.ts";
 import { formatMessage } from "./formatMessage.ts";
 import { buildPromptOptions } from "./agent/buildPromptOptions.ts";
 import { harnessRules } from "./agent/prompts.ts";
-import { installEnvelopeEnforcement } from "./agent/installEnvelopeEnforcement.ts";
 import { withToolLogging } from "./agent/withToolLogging.ts";
+import { installStreamingSender } from "./agent/installStreamingSender.ts";
 import { installActiveTracker } from "./active/installActiveTracker.ts";
 import type { ActiveTracker } from "./active/createActiveTracker.ts";
 
@@ -65,23 +67,32 @@ You are running from source at \`${resolve(dirname(import.meta.path), "..")}\`. 
  * Per-channel pool entry — closure-internal bookkeeping. Bundles the
  * session with the I/O handles needed to dispatch through it, plus the
  * `lastActive` timestamp for the eviction sweep. Never exported: every
- * subsystem (envelope-enforcement, active-tracker, etc.) takes only the
+ * subsystem (streaming-sender, active-tracker, etc.) takes only the
  * specific handles it uses, not the whole struct.
  */
 interface PoolEntry {
   session: AgentSession;
-  sender: MessageSender;
+  sender: DiscordSender;
   logger: DebugLogger;
   lastActive: number;
+  /**
+   * Discord message ID to thread-reply the FIRST streamed message of the
+   * next agent run under. Updated on each `handle` call (real user
+   * message); cleared on `wakeUp` (synthetic prompts have no thread
+   * target). Read once per run by `installStreamingSender`.
+   */
+  replyTarget: string | undefined;
 }
 
 /**
  * Construct the full tool set for a channel's session: pi's reconstructed
  * built-in coding tools (bash/read/write/edit) plus the harness's Discord
- * tools (send/react/history/thread/restart_self). Every tool is run
- * through `withToolLogging` so each call gets a start-line in the log
- * channel and a follow-up failure-line (threaded as a Discord reply)
- * when the result `isError`.
+ * tools (attach/react/history/thread/restart_self). Plain text replies
+ * stream automatically — no envelope tool needed.
+ *
+ * Every tool is run through `withToolLogging` so each call gets a start-
+ * line in the log channel and a follow-up failure-line (threaded as a
+ * Discord reply) when the result `isError`.
  *
  * Each `withToolLogging` call is inlined rather than going through a
  * wrapping helper because pi's typed tool builders return concrete
@@ -94,7 +105,7 @@ function buildTools(args: {
   client: Client;
   channelId: string;
   workspaceDir: string;
-  sender: MessageSender;
+  sender: DiscordSender;
   logger: DebugLogger;
   tracker: ActiveTracker;
   wakeUp: (channelId: string, prompt: string) => Promise<void>;
@@ -105,7 +116,7 @@ function buildTools(args: {
     withToolLogging(createReadToolDefinition(workspaceDir), logger),
     withToolLogging(createWriteToolDefinition(workspaceDir), logger),
     withToolLogging(createEditToolDefinition(workspaceDir), logger),
-    withToolLogging(createSendTool({ sender }), logger),
+    withToolLogging(createAttachTool({ sender }), logger),
     withToolLogging(createReactTool({ client, channelId }), logger),
     withToolLogging(createHistoryTool({ client, channelId }), logger),
     withToolLogging(createThreadTool({ client, channelId, wakeUp }), logger),
@@ -198,7 +209,7 @@ export function createAgentPool(args: {
     const workspaceDir = resolve(config.agentDir, "workspaces", channelId);
     await mkdir(workspaceDir, { recursive: true });
 
-    const sender = createMessageSender({ client, channelId });
+    const sender = createDiscordSender({ client, channelId });
     // Logger is constructed BEFORE the session because tools (built next)
     // need to capture it via `withToolLogging`. Everything the logger
     // needs *post*-session is deferred via callbacks — the logger captures
@@ -256,9 +267,14 @@ export function createAgentPool(args: {
       sender,
       logger,
       lastActive: Date.now(),
+      replyTarget: undefined,
     };
 
-    installEnvelopeEnforcement({ session, sender });
+    installStreamingSender({
+      session,
+      sender,
+      getReplyTarget: () => entry.replyTarget,
+    });
     installActiveTracker({ channelId, session, tracker });
 
     entries.set(channelId, entry);
@@ -273,6 +289,9 @@ export function createAgentPool(args: {
     // logger uses it as the link target so each tool entry is clickable
     // back to the user message that triggered the run.
     entry.logger.setSourceMessageUrl(message.url);
+    // Thread the FIRST streamed message of the upcoming run under this
+    // user message. installStreamingSender reads this once per run.
+    entry.replyTarget = message.id;
 
     tracker.markPending(channelId);
 
@@ -337,6 +356,8 @@ export function createAgentPool(args: {
   async function wakeUp(channelId: string, prompt: string): Promise<void> {
     const entry = await acquirePoolEntry(channelId);
     entry.lastActive = Date.now();
+    // Synthetic wake — no real Discord message to thread under.
+    entry.replyTarget = undefined;
     try {
       await entry.session.prompt(prompt);
     } catch (error) {

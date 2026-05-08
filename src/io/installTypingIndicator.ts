@@ -3,7 +3,7 @@
  * cue. Stays visible while the agent is doing anything observable: an LLM
  * turn, a tool call, or a compaction. Self-contained: subscribes to
  * session events and manages its own timer. Shares no state with
- * `MessageSender` or `DebugLogger`, so consumers don't need to thread it
+ * `DiscordSender` or `DebugLogger`, so consumers don't need to thread it
  * through their own interfaces.
  *
  * Two independent activity flags drive a "typing iff anything's happening"

@@ -1,8 +1,9 @@
 /**
- * Reactions are the second valid envelope-tool delivery: when a user message
- * needs only a one-character acknowledgment, the model picks this instead of
- * the `send` tool. Like sending, it terminates the turn — if the
- * model needs follow-up work, it should call other tools BEFORE reacting.
+ * Reactions are the harness's emoji-acknowledgment path. Plain text replies
+ * stream automatically; this tool exists for the cases where a single
+ * emoji is the right reply (user says "thanks" → react 👍). Terminates
+ * the turn — if the model needs follow-up work, it should call other
+ * tools BEFORE reacting.
  *
  * Behavior is a toggle: if the bot already has the given emoji on the target
  * message, the reaction is removed; otherwise it's added. This means the
@@ -23,7 +24,7 @@ export function createReactTool(args: { client: Client; channelId: string }) {
     name: "react",
     label: "react",
     description:
-      "Toggle an emoji reaction on a specific message in the current channel/thread. If you've already reacted with this emoji, the reaction is removed; otherwise it's added. Use this for messages that need only a one-character acknowledgment (e.g., user says 'thanks' → react 👍), or to retract a reaction you placed earlier by calling again with the same emoji. This is an alternative to the `send` tool — pick one per turn based on whether words are needed. The target message ID comes from the `message_id=…` field of every message you see (wake prompt and `history` tool output).",
+      "Toggle an emoji reaction on a specific message in the current channel/thread. If you've already reacted with this emoji, the reaction is removed; otherwise it's added. Use this for messages that need only a one-character acknowledgment (e.g., user says 'thanks' → react 👍), or to retract a reaction you placed earlier by calling again with the same emoji. Plain text replies stream automatically; reach for this tool when an emoji is sufficient and words aren't needed. The target message ID comes from the `message_id=…` field of every message you see (wake prompt and `history` tool output).",
     parameters: Type.Object({
       emoji: Type.String({
         description: "Unicode emoji (e.g. 👍, ✅, ❤️) or :name: for custom server emojis",

@@ -34,15 +34,24 @@ ones. The trade-off in giving the agent unrestricted shell and
 filesystem access is power vs blast radius — the assumption is a
 trusted home rather than a hostile sandbox.
 
-- **`send(text, end_of_turn?, in_reply_to?, attachments?)`** — the only way
-  visible text reaches the user. Raw assistant text is dropped by the
-  harness. The agent loop continues after each call by default; set
-  `end_of_turn: true` on the final call when there's nothing left to do.
-  Pass `in_reply_to=<message_id>` to thread the reply under a specific
-  message (Discord shows a "replying to" badge). Attach files inline by
-  passing absolute paths in `attachments` (≤24MB each, ≤10 per message).
-  `text` must be ≤1900 chars — longer messages are rejected; split into
-  multiple calls at paragraph/section boundaries.
+- **Plain text streams to Discord automatically.** The agent writes
+  standard GFM-flavored markdown — the format any LLM naturally produces
+  — and the harness translates the bits Discord can't render before
+  posting: tables become ASCII-aligned code blocks, task lists become
+  `☐` / `☑` bullets, image markdown becomes masked links, raw HTML is
+  stripped, and incomplete inline marks (mid-stream `**bold`) are
+  auto-closed by [`remend`](https://github.com/vercel/streamdown/tree/main/packages/remend)
+  so the live edit doesn't show literal asterisks.
+  Long replies split at safe top-level block boundaries (between
+  paragraphs, around code blocks, between list groups, etc.). The full
+  pipeline is in [`../src/streaming/prepareForDelivery.ts`](../src/streaming/prepareForDelivery.ts)
+  with seam selection in [`../src/streaming/findSafeSplit.ts`](../src/streaming/findSafeSplit.ts)
+  and the post/edit driver in
+  [`../src/streaming/createStreamingDispatcher.ts`](../src/streaming/createStreamingDispatcher.ts).
+- **`attach(files, content?, in_reply_to?)`** — post a Discord message
+  with file attachments (≤24MB each, ≤10 per message). Optional caption
+  for short headlines; long prose still goes through the text stream.
+  Use for sharing generated artifacts, images, documents.
 - **`react(emoji, message_id)`** — toggle an emoji reaction on a specific
   message. Calling twice with the same emoji removes it. Use for "thanks /
   got it / 👍" style acknowledgments. The `message_id` is mandatory
@@ -63,29 +72,36 @@ trusted home rather than a hostile sandbox.
   after editing the framework, or as a recovery hatch. No-op if no
   supervisor is running.
 
-## Why the envelope-tool pattern
+## How streaming text reaches Discord
 
-The agent's raw assistant text is not delivered to Discord — the harness
-drops it. Every visible reply must go through one of the three delivery
-tools (`send`, `react`, `thread`). The set is centralized in
-[`../src/agent/deliveryTools.ts`](../src/agent/deliveryTools.ts). This is
-enforced by:
+Each text content block in an assistant message becomes its own chain of
+Discord messages. The first delta posts a message after a short debounce
+so a flurry of fast tokens batch into a single send; subsequent deltas
+edit the same message on a longer debounce (Discord's per-channel edit
+bucket is small).
 
-1. The system prompt mandating it (appended automatically — see
-   [`../src/agent/prompts.ts`](../src/agent/prompts.ts)).
-2. The harness ignoring assistant `message_update` events (raw text never
-   gets rendered to Discord).
-3. A silent-turn detector — if a turn produces no delivery tool, the
-   harness augments the system prompt for one `agent.continue()` retry. If
-   that retry is also silent, raw text is surfaced with a
-   `*[harness fallback]*` prefix so the user always sees something.
-4. A circuit breaker — runaway `send`-only loops get `session.abort()`
-   on the 9th consecutive send-only turn. Encapsulated in
-   [`../src/agent/createRunawayCounter.ts`](../src/agent/createRunawayCounter.ts).
+On every flush, the raw buffer goes through `prepareForDelivery`:
+[`remend`](https://github.com/vercel/streamdown/tree/main/packages/remend)
+closes any unfinished inline marks at the suffix, [`remark`](https://www.npmjs.com/package/remark)
++ [`remark-gfm`](https://www.npmjs.com/package/remark-gfm) parses the
+result into an mdast AST, transform visitors rewrite tables / task
+lists / images / HTML / `__bold__`, and `remark-stringify` emits each
+top-level block back to markdown — accumulating both the rendered text
+and a list of (rawStart, rawEnd, renderedStart, renderedEnd) per block.
 
-Net result: the model can't half-deliver, can't accidentally narrate a
-correction, and can't loop indefinitely. Behaviour is robust across
-models that don't reliably honor `tool_choice` (e.g. DeepSeek).
+When the rendered length outgrows what one Discord message can hold,
+[`findSafeSplit`](../src/streaming/findSafeSplit.ts) picks the latest
+top-level block boundary at-or-before the soft limit. The current
+message is edited down to the seal point (potentially shorter than
+what's currently displayed — the rollback case) and the raw buffer
+slices past the consumed offset so the carry-over re-renders fresh on
+the next message. Forced fallbacks (within-block word boundary, code-
+fence close-and-reopen, hard cut) kick in only when the buffer is past
+the hard limit or the stream has ended without a clean seam.
+
+The first streamed message of an agent run threads under the user
+message that woke the run; later messages don't, so a multi-step turn
+doesn't repeat the reply badge.
 
 ## Debug channel
 
@@ -103,8 +119,8 @@ call of each LLM batch carries the per-call usage suffix
 ```
 -# 🟢 online
 -# [bash](url) command="git status" · 6.8k/128k → 340 · $0.0017
--# [send](url) text="Here's what I found, …" in_reply_to="1500..."
--# [history](url) limit=50 · 67.8k/200k → 44 · $0.0001
+-# [attach](url) files=["/.../report.pdf"] content="here's the writeup" · 67.8k/200k → 44 · $0.0001
+-# [history](url) limit=50
 -# ❌ react failed: message 1500... not found in this channel    ← reply-threaded under the start line
 -# 🗜️ [compacting](url) context · trigger=manual
 -# 🗜️ compacted · was 87.3k · "Summary preview..."
