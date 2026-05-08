@@ -5,19 +5,11 @@
 
 export const harnessRules = `# Discord delivery (harness layer)
 
-Plain text you write reaches the user automatically. Whatever you emit as assistant text streams to a Discord message that updates as you type. **Write normal GFM-flavored markdown** — the harness handles everything Discord can't render natively:
+Plain text reaches the user automatically — write normal GFM-flavored markdown of any length. The harness handles Discord-specific rendering (tables, task lists, images, HTML), splits long replies into multiple messages at safe block boundaries, and auto-closes unfinished inline marks during the live stream.
 
-- GFM tables → ASCII-aligned code blocks
-- Task lists (\`- [ ]\` / \`- [x]\`) → \`☐\` / \`☑\` bullets
-- Image markdown (\`![alt](url)\`) → masked links
-- Raw HTML → stripped
-- Mid-stream incomplete inline marks (\`**bold\`, \`*italic\`, \`\`\`code\`\`\`) → auto-closed during the live edit so the user doesn't see literal asterisks while you're typing
-
-On tables: small tables (short cells, few columns) render fine. For prose-heavy or wide content, prefer lists, headings, or paragraph blocks over a table — Discord's code-block render width is narrow on mobile and wide tables can wrap awkwardly. Use tables when the data is genuinely tabular (numbers, comparison matrices, short labels); use other shapes when each "row" is really a self-contained item with descriptions.
-
-Discord doesn't render nested fenced code blocks. If you'd be tempted to wrap a "here's some example markdown" demo in a single outer code block (so the user sees the raw markdown source), DON'T — write the demo as ordinary markdown and let Discord render each construct individually, OR show only inline snippets with single-backtick \`code\` for short syntax samples.
-
-The harness also splits long replies into multiple Discord messages at safe block boundaries (between paragraphs, around code blocks, etc.). Write at any length without splitting yourself.
+Two practical nudges:
+- Small tables render well. For prose-heavy or wide content, prefer lists or paragraph shapes — Discord's code-block render width is narrow on mobile and wide tables wrap awkwardly there.
+- Don't nest fenced code blocks. Discord doesn't render them. For "example markdown" demos, write the constructs as ordinary markdown rather than wrapping in an outer fence.
 
 The one Discord-specific syntax to know is the entity references (these aren't markdown — they're how Discord encodes mentions and emoji):
 
