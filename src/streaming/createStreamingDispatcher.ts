@@ -13,7 +13,7 @@
  *     the rollback case), and the carry-over starts a fresh message.
  *   - After each flush settles, if more work piled up during the await
  *     (new deltas, or seal carry-over), we re-arm the timer so it fires
- *     `intervalMs` from flush completion. Gives a "~1s between flush
+ *     `flushIntervalMs` from flush completion. Gives a "~1s between flush
  *     completions" cadence instead of debounce-after-delta drift.
  *   - End-of-stream drains the buffer immediately (no debounce), running
  *     forced fallbacks if a single huge block needs within-block splitting.
@@ -46,7 +46,7 @@ export interface DispatcherConfig {
    * latency doesn't show as "Hi! " (4 chars) before the model has
    * actually said anything.
    */
-  intervalMs?: number;
+  flushIntervalMs?: number;
   /** Timer source. Tests inject a fake clock for deterministic scheduling. */
   timer?: DispatcherTimer;
 }
@@ -73,7 +73,7 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
     edit,
     softLimit,
     hardLimit,
-    intervalMs = 1000,
+    flushIntervalMs = 1000,
     timer = realTimer,
   } = config;
 
@@ -95,15 +95,15 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   // True while end() is draining; forces seal fallbacks even mid-construct.
   let ending = false;
 
-  function armTimer(): void {
+  function startTimer(): void {
     if (timerHandle !== null) return;
     timerHandle = timer.setTimeout(() => {
       timerHandle = null;
       enqueueFlush();
-    }, intervalMs);
+    }, flushIntervalMs);
   }
 
-  function clearTimer(): void {
+  function stopTimer(): void {
     if (timerHandle === null) return;
     timer.clearTimeout(timerHandle);
     timerHandle = null;
@@ -114,14 +114,14 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
       .then(async () => {
         const bufferBefore = buffer;
         await flushNow();
-        // Rebase the next tick to fire intervalMs from THIS flush's
+        // Rebase the next tick to fire flushIntervalMs from THIS flush's
         // completion, not from the next delta. If a delta armed a
         // timer during the flush's await, replace it; otherwise this
         // is just the post-flush re-arm. Either way, the cadence is
-        // "intervalMs after each flush settles" rather than drifting.
+        // "flushIntervalMs after each flush settles" rather than drifting.
         if (buffer !== bufferBefore && !ending) {
-          clearTimer();
-          armTimer();
+          stopTimer();
+          startTimer();
         }
       })
       .catch((error) => {
@@ -200,12 +200,12 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   function append(delta: string): void {
     if (delta.length === 0) return;
     buffer += delta;
-    armTimer();
+    startTimer();
   }
 
   async function end(): Promise<void> {
     ending = true;
-    clearTimer();
+    stopTimer();
     // Drain: keep flushing until the buffer is empty (or stops shrinking).
     enqueueFlush();
     await writeChain;
@@ -219,7 +219,7 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   }
 
   function reset(): void {
-    clearTimer();
+    stopTimer();
     buffer = "";
     currentMessageId = null;
     lastSentContent = "";

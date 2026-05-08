@@ -76,7 +76,7 @@ function makeDispatcher(args: { softLimit?: number; hardLimit?: number; recorder
   const dispatcher = createStreamingDispatcher({
     softLimit,
     hardLimit,
-    intervalMs: 20,
+    flushIntervalMs: 20,
     timer,
     post: async (content) => {
       const idx = recorder.postCount++;
@@ -108,7 +108,7 @@ async function settle(control: FakeTimer): Promise<void> {
 }
 
 describe("createStreamingDispatcher — flush scheduling", () => {
-  test("first delta arms the flush timer at intervalMs", async () => {
+  test("first delta arms the flush timer at flushIntervalMs", async () => {
     const { dispatcher, control } = makeDispatcher();
     dispatcher.append("a");
     expect(control.scheduledDelays).toEqual([20]);
@@ -127,7 +127,7 @@ describe("createStreamingDispatcher — flush scheduling", () => {
   test("after a flush settles with content changes during the await, the next timer is rebased to fire from flush completion", async () => {
     // Force a delta to arm a timer DURING the flush's await; verify the
     // post-flush re-arm clears that timer and schedules a fresh one,
-    // giving "intervalMs after flush completes" cadence rather than
+    // giving "flushIntervalMs after flush completes" cadence rather than
     // debounce-after-delta drift.
     let resolvePost: ((v: { messageId: string }) => void) | null = null;
     const postPromise = new Promise<{ messageId: string }>((r) => {
@@ -137,7 +137,7 @@ describe("createStreamingDispatcher — flush scheduling", () => {
     const dispatcher = createStreamingDispatcher({
       softLimit: 50,
       hardLimit: 100,
-      intervalMs: 20,
+      flushIntervalMs: 20,
       timer,
       post: async () => postPromise,
       edit: async () => {},
@@ -180,9 +180,9 @@ describe("createStreamingDispatcher — flush scheduling", () => {
     await settle(control);
   });
 
-  test("seal-then-post sequence: deltas continue to be paced at intervalMs", async () => {
+  test("seal-then-post sequence: deltas continue to be paced at flushIntervalMs", async () => {
     // After a seal flips currentMessageId to null briefly, the next
-    // append should still schedule at intervalMs — there's no special-
+    // append should still schedule at flushIntervalMs — there's no special-
     // case "first post" delay anymore.
     const { dispatcher, control } = makeDispatcher({ softLimit: 30, hardLimit: 100 });
     dispatcher.append("first");
