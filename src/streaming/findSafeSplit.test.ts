@@ -83,13 +83,34 @@ describe("findSafeSplit — list / blockquote / heading blocks", () => {
     expect(result?.keepRendered).toMatch(/another line\s*$/);
   });
 
-  test("heading is its own block", () => {
+  test("heading-led split: heading starts the next message rather than ending the prior one", () => {
     const prep = prepareForDelivery("intro\n\n## Section\n\nbody");
-    const result = findSafeSplit(prep, opts({ softLimit: 20 }));
-    // softLimit=20: only "intro" fits as a complete block. Boundaries
-    // after it: rendered offset 5 (intro), 16 (heading), then body.
-    // Latest ≤ 20 is offset 16 (after heading).
-    expect(result?.keepRendered).toMatch(/Section\s*$/);
+    const result = findSafeSplit(prep, opts({ softLimit: 200 }));
+    // Boundaries available: after "intro" (before heading), after the
+    // heading (before "body"). The heading-preference rule picks the
+    // before-heading boundary even though a later boundary exists, so
+    // the heading leads the carry-over message instead of ending the
+    // current one.
+    expect(result?.keepRendered).toBe("intro");
+    expect(result?.rawConsumed).toBe("intro".length);
+  });
+
+  test("bold-only-line acts as a heading for split-preference purposes", () => {
+    // LLMs reach for `**Section title**` on its own line as a soft
+    // heading. Treat it the same as a real heading when picking seams.
+    const prep = prepareForDelivery("intro\n\n**Section title**\n\nbody");
+    const result = findSafeSplit(prep, opts({ softLimit: 200 }));
+    expect(result?.keepRendered).toBe("intro");
+  });
+
+  test("bold paragraph that contains other inline content is NOT treated as a heading", () => {
+    // Only a *single* strong child of the paragraph counts. Mixed
+    // inline content (bold + plain text) is just a paragraph.
+    const prep = prepareForDelivery("intro\n\n**bold start** then more text\n\nbody");
+    const result = findSafeSplit(prep, opts({ softLimit: 200 }));
+    // No before-heading boundary exists, so we fall back to the latest
+    // any-boundary — which is after the middle paragraph.
+    expect(result?.keepRendered).not.toBe("intro");
   });
 });
 

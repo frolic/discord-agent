@@ -21,6 +21,7 @@
  * needs the rendered slice to send to Discord and the raw slice to
  * truncate its buffer for subsequent deltas.
  */
+import type { RootContent } from "mdast";
 import type { PreparedDelivery } from "./prepareForDelivery.ts";
 
 export interface SplitOptions {
@@ -77,13 +78,37 @@ function pickLatestBoundary(prep: PreparedDelivery, softLimit: number): number |
   // We want the latest i whose renderedEnd ≤ softLimit AND there exists at
   // least one block AFTER it (otherwise sealing here means "send everything"
   // — no carry-over needed, no split actually required).
-  let best: number | null = null;
+  //
+  // Prefer boundaries that land RIGHT BEFORE a heading-like block — both
+  // proper ATX headings (`## Section`) and "bold-only" pseudo-headings
+  // (`**Section title**` on a line by itself) that LLMs reach for. Models
+  // structure long replies by section; sealing on a section break feels
+  // natural, sealing in the middle of a section's content doesn't.
+  let bestAny: number | null = null;
+  let bestBeforeHeading: number | null = null;
   for (let i = 0; i < prep.blocks.length - 1; i++) {
     const block = prep.blocks[i]!;
     if (block.renderedEnd > softLimit) break;
-    best = i;
+    bestAny = i;
+    if (isHeadingLike(prep.blocks[i + 1]!.node)) {
+      bestBeforeHeading = i;
+    }
   }
-  return best;
+  return bestBeforeHeading ?? bestAny;
+}
+
+/**
+ * A node the model is using as a section break. Both proper headings
+ * (`## Title`) and a paragraph that's just bold text (`**Title**` on its
+ * own line) qualify — the latter is a common LLM substitute for a real
+ * heading when the model doesn't want full heading semantics.
+ */
+function isHeadingLike(node: RootContent): boolean {
+  if (node.type === "heading") return true;
+  if (node.type === "paragraph" && node.children.length === 1 && node.children[0]?.type === "strong") {
+    return true;
+  }
+  return false;
 }
 
 function forceSplitInsideBlock(
