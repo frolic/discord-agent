@@ -15,7 +15,7 @@
  * no need for an implicit "react to the latest" fallback.
  */
 import type { Client } from "discord.js";
-import { defineTool } from "@mariozechner/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export function createReactTool(args: { client: Client; channelId: string }) {

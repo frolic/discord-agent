@@ -31,7 +31,7 @@ import {
   SessionManager,
   type AgentSession,
   type ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { config } from "./config.ts";
 import { createDiscordSender, type DiscordSender } from "./io/createDiscordSender.ts";
 import { createDebugLogger, type DebugLogger } from "./io/createDebugLogger.ts";
@@ -141,7 +141,7 @@ export interface AgentPool {
    * `true` if a new compaction started, `false` if skipped (no warm
    * session, or one is already in flight). Concurrent calls are skipped
    * because pi's `AgentSession.compact()` doesn't guard against re-entry
-   * — see upstream issue badlogic/pi-mono#4203.
+   * — see upstream issue earendil-works/pi#4203.
    */
   compact(channelId: string): boolean;
   /** True iff a pool entry exists for this channel — used to gate edit-as-steering on live conversations. */
@@ -342,7 +342,7 @@ export function createAgentPool(args: {
     if (!entry) return false;
     // Concurrent compactions on the same session orphan pi's
     // `_compactionAbortController` and run two LLM summaries in parallel
-    // (badlogic/pi-mono#4203). Skip if one is already in flight.
+    // (earendil-works/pi#4203). Skip if one is already in flight.
     if (entry.session.isCompacting) return false;
     // Pi can still throw "Already compacted" if the last session entry
     // is already a compaction — fire-and-forget but catch to avoid an

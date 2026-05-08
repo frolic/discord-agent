@@ -1,6 +1,6 @@
 # discord-agent
 
-A Discord harness for [pi](https://github.com/badlogic/pi-mono) agents.
+A Discord harness for [pi](https://github.com/earendil-works/pi) agents.
 One Bun process. Each Discord channel/thread gets its own warm
 `AgentSession` with on-disk history and a private workspace. Threads are
 first-class — their own session, their own workspace.
@@ -13,7 +13,7 @@ any number of agents.
 
 - [Bun](https://bun.sh) ≥ 1.1
 - A Discord account (you'll create a bot application)
-- An LLM API key from any [pi-supported provider](https://github.com/badlogic/pi-mono/blob/v0.72.1/packages/ai/README.md#supported-providers) — Anthropic, OpenAI, DeepSeek, OpenRouter, Google, etc.
+- An LLM API key from any [pi-supported provider](https://github.com/earendil-works/pi/blob/v0.74.0/packages/ai/README.md#supported-providers) — Anthropic, OpenAI, DeepSeek, OpenRouter, Google, etc.
 
 ## Quick start
 
@@ -72,5 +72,5 @@ and self-modification, see [docs/operating.md](docs/operating.md).
 
 The agent home is also pi's `agentDir` — `settings.json`, `models.json`,
 custom skills, etc. are all configured the pi-native way. See
-[pi-coding-agent's settings docs](https://github.com/badlogic/pi-mono/blob/v0.72.1/packages/coding-agent/docs/settings.md)
+[pi-coding-agent's settings docs](https://github.com/earendil-works/pi/blob/v0.74.0/packages/coding-agent/docs/settings.md)
 for the full list of pi-side knobs.

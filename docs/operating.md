@@ -90,7 +90,7 @@ REST and gateway traffic through the canary domain instead.
 
 Tune the model, compaction, retry, skills paths, themes, and more via
 `<agent-home>/settings.json`. Full reference:
-[pi-coding-agent settings docs](https://github.com/badlogic/pi-mono/blob/v0.72.1/packages/coding-agent/docs/settings.md).
+[pi-coding-agent settings docs](https://github.com/earendil-works/pi/blob/v0.74.0/packages/coding-agent/docs/settings.md).
 
 Common knobs:
 
@@ -123,7 +123,7 @@ the first session opens.
 For self-hosted endpoints (vLLM, Ollama, custom OpenAI-compatible) or
 overriding pricing/context-window metadata on built-in models, drop a
 `models.json` next to `settings.json`. Format and override semantics are
-pi-native — see the [pi-coding-agent docs](https://github.com/badlogic/pi-mono/tree/v0.72.1/packages/coding-agent/docs).
+pi-native — see the [pi-coding-agent docs](https://github.com/earendil-works/pi/tree/v0.74.0/packages/coding-agent/docs).
 
 ## Running long-term with systemd
 

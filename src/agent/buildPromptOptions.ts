@@ -4,7 +4,7 @@
  * flight (so a new user message gets injected as a steer rather than
  * queued as a separate prompt).
  */
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 
 interface PromptOptions {
   images?: ImageContent[];

@@ -21,7 +21,7 @@
  * visible even though no `turn_start` fired.
  */
 import type { Client, SendableChannels } from "discord.js";
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { fetchSendableChannel } from "./fetchSendableChannel.ts";
 
 // Discord's typing indicator auto-fades ~10 seconds after the last

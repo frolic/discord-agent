@@ -5,7 +5,7 @@
  * (e.g., read).
  */
 import type { Message } from "discord.js";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 
 export async function collectImageAttachments(message: Message): Promise<ImageContent[]> {
   const images: ImageContent[] = [];

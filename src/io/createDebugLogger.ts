@@ -34,8 +34,8 @@
  * clickable).
  */
 import type { Client, SendableChannels } from "discord.js";
-import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentEvent } from "@earendil-works/pi-agent-core";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { config } from "../config.ts";
 import { extractToolErrorText } from "./extractToolErrorText.ts";
 import { fetchSendableChannel } from "./fetchSendableChannel.ts";

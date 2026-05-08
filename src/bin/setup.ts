@@ -11,7 +11,7 @@
  * No `MODEL_PROVIDER` / `MODEL_NAME` here — pi resolves the provider
  * from whichever `*_API_KEY` we write (auth-driven). Tune model defaults
  * in `<agent-home>/settings.json`; see
- * https://github.com/badlogic/pi-mono/blob/v0.72.1/packages/coding-agent/docs/settings.md
+ * https://github.com/earendil-works/pi/blob/v0.74.0/packages/coding-agent/docs/settings.md
  */
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";

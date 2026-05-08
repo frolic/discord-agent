@@ -12,7 +12,7 @@
  * text or further tool calls after the attachment lands.
  */
 import { stat } from "node:fs/promises";
-import { defineTool } from "@mariozechner/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { DiscordSender } from "../io/createDiscordSender.ts";
 

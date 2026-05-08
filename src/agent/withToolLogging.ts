@@ -11,7 +11,7 @@
  * uniformly across pi's built-in tools and the harness's custom tools as
  * long as both go through this wrapper.
  */
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import type { DebugLogger } from "../io/createDebugLogger.ts";
 
