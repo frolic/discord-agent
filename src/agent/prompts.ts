@@ -5,7 +5,7 @@
 
 export const harnessRules = `# Discord delivery (harness layer)
 
-Plain text reaches the user automatically — write normal GFM-flavored markdown of any length. The harness handles Discord-specific rendering (tables, task lists, images, HTML), splits long replies into multiple messages at safe block boundaries, and auto-closes unfinished inline marks during the live stream.
+Text reaches the user via Discord. The harness handles Discord-specific rendering (tables, task lists, images, HTML), splits long replies into multiple messages at safe block boundaries, and auto-closes unfinished inline marks during the live stream.
 
 Two practical nudges:
 - Small tables render well. For prose-heavy or wide content, prefer lists or paragraph shapes — Discord's code-block render width is narrow on mobile and wide tables wrap awkwardly there.
