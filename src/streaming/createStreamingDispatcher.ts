@@ -1,83 +1,60 @@
 /**
  * Drives the "stream assistant text into edited Discord messages" loop.
  *
- * The dispatcher receives raw text deltas from the agent runtime and
- * turns them into Discord writes:
+ * The mental model:
  *
- *   1. Each flush: run the raw buffer through `prepareForDelivery`
- *      (remend → remark parse → transforms → stringify), yielding the
- *      Discord-ready string and a list of top-level block boundaries.
- *   2. First flush of a stream → post a new Discord message after a short
- *      debounce, so a flurry of fast deltas batch into a single send.
- *   3. Subsequent flushes → edit the same message on a longer debounce
- *      (Discord's per-channel edit bucket is small).
- *   4. Rendered length crosses the soft limit → `findSafeSplit` picks
- *      the latest block boundary at-or-before the limit. The current
- *      message gets edited down to `keepRendered` (potentially shorter
- *      than what was just shown — the rollback case), the raw buffer is
- *      sliced past `rawConsumed`, and the next flush posts the rest as
- *      a fresh message.
- *   5. End of stream → cancel debouncers, flush until empty (forced
- *      fallbacks engage so within-block splits eventually drain).
+ *   - On a delta, append to a raw-markdown buffer and arm a single-slot
+ *     timer (no-op if one is already armed). When the timer fires, the
+ *     buffer is rendered through `prepareForDelivery` and either posted
+ *     as a new Discord message or edited onto the current one.
+ *   - When the rendered length crosses `softLimit`, `findSafeSplit`
+ *     picks a safe block boundary; the current message is edited down
+ *     to that seam (potentially shorter than what's currently shown —
+ *     the rollback case), and the carry-over starts a fresh message.
+ *   - After each flush settles, if more work piled up during the await
+ *     (new deltas, or seal carry-over), we re-arm the timer so it fires
+ *     `intervalMs` from flush completion. Gives a "~1s between flush
+ *     completions" cadence instead of debounce-after-delta drift.
+ *   - End-of-stream drains the buffer immediately (no debounce), running
+ *     forced fallbacks if a single huge block needs within-block splitting.
  *
  * The Discord side is injected as `post` / `edit` callbacks so this
- * module is pure logic and can be unit-tested by recording calls.
- * Writes are serialized through an internal chain so concurrent settles
- * arrive in order on the displayed message.
+ * module is pure logic; tests record calls. Writes are serialized
+ * through an internal chain so concurrent settles arrive in order.
  */
-import { createDebounceTimer, type DispatcherTimer } from "./createDebounceTimer.ts";
 import { findSafeSplit } from "./findSafeSplit.ts";
 import { prepareForDelivery } from "./prepareForDelivery.ts";
 
-export type { DispatcherTimer };
+export interface DispatcherTimer {
+  setTimeout(handler: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
 
 export interface DispatcherConfig {
-  /**
-   * Send a fresh Discord message with `content`. Returns the new message's
-   * ID, or null if the send failed (the dispatcher then drops that chunk).
-   */
+  /** Send a fresh Discord message. Returns the new message's ID, or null on failure. */
   post: (content: string) => Promise<{ messageId: string } | null>;
-  /**
-   * Edit an existing Discord message. A rejection is logged and the
-   * displayed content is treated as stale until the next delta forces
-   * another edit.
-   */
+  /** Edit an existing Discord message. Rejection is logged; next delta retries. */
   edit: (messageId: string, content: string) => Promise<void>;
-  /**
-   * Try-paragraph-seam target. Once the buffer exceeds this and a clean
-   * seam exists, the dispatcher splits.
-   */
+  /** Try-paragraph-seam target. Once exceeded with a clean seam, the dispatcher splits. */
   softLimit: number;
-  /**
-   * Absolute per-message cap. The dispatcher never lets a single message
-   * grow past this; once forced, the splitter falls back to line/word/hard.
-   */
+  /** Absolute per-message cap; once exceeded, the splitter forces a within-block split. */
   hardLimit: number;
   /**
-   * Wait this long after the first delta of a stream before posting.
-   * Default 1000ms — long enough that a fast stream batches a useful
-   * chunk into the initial post (avoiding 4-char "Hi! " messages that
-   * land before the model has actually said anything). Slow / stalled
-   * streams still post within this window so silence isn't unbounded.
+   * Wait this long before firing each flush. Default 1000ms — matches
+   * Discord's empirical ~5-edits-per-5-seconds per-channel bucket, and
+   * batches enough content into the initial post so first-message
+   * latency doesn't show as "Hi! " (4 chars) before the model has
+   * actually said anything.
    */
-  initialPostDelayMs?: number;
-  /**
-   * Wait this long between edit calls. Default 1000ms — matches Discord's
-   * empirical ~5-edits-per-5-seconds per-channel bucket. Setting this
-   * lower piles up requests in discord.js's REST queue (no errors, but
-   * a noticeable pause after a burst once the bucket drains).
-   */
-  editDebounceMs?: number;
-  /**
-   * Timer source. Tests inject a fake clock for deterministic scheduling.
-   */
+  intervalMs?: number;
+  /** Timer source. Tests inject a fake clock for deterministic scheduling. */
   timer?: DispatcherTimer;
 }
 
 export interface StreamingDispatcher {
-  /** Append a delta. Schedules a write if one isn't pending. */
+  /** Append a delta. Arms the flush timer if not already pending. */
   append(delta: string): void;
-  /** End the current stream. Flushes pending content; resolves on settle. */
+  /** End the stream. Drains pending content immediately; resolves on settle. */
   end(): Promise<void>;
   /** Reset state for a fresh stream (e.g., new text block after a tool call). */
   reset(): void;
@@ -96,49 +73,55 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
     edit,
     softLimit,
     hardLimit,
-    initialPostDelayMs = 1000,
-    editDebounceMs = 1000,
+    intervalMs = 1000,
     timer = realTimer,
   } = config;
 
-  // Pending content. After first post, equals the latest intended message
-  // body; every flush replaces the message wholesale via edit.
+  // Pending raw-markdown content. Every flush renders this through
+  // prepareForDelivery and either posts it or edits the current message.
   let buffer = "";
-  // Discord message currently being edited; null before first post and
-  // again after a seal until the next flush posts the carry-over.
+  // The Discord message currently being edited; null before first post
+  // and again briefly after a seal until the next flush posts the carry-over.
   let currentMessageId: string | null = null;
-  // Last content we sent for currentMessageId — skip redundant edits.
+  // Last rendered text we sent for currentMessageId — skips redundant edits.
   let lastSentContent = "";
-  // Single-slot debounce timer with the "one pending callback at a time"
-  // guard. When it fires, the flush is enqueued onto the write chain.
-  const scheduler = createDebounceTimer({ timer, onFire: () => enqueueFlush() });
-  // Serial chain so writes settle in order.
+  // Single-slot flush timer. Armed by deltas (if not pending) and re-armed
+  // after a flush settles when more work piled up during the await.
+  let timerHandle: unknown = null;
+  // Serial chain so writes settle in display order.
   let writeChain: Promise<unknown> = Promise.resolve();
   // Settled list of messages we've created.
   const messageIds: string[] = [];
   // True while end() is draining; forces seal fallbacks even mid-construct.
   let ending = false;
-  // True once we've posted at least one Discord message. Used to pick
-  // between the (short) initial-post debounce and the (longer) edit
-  // debounce — without this, every seal-induced `currentMessageId = null`
-  // window wrongly drops back to the initial-post debounce, letting
-  // edits burst past Discord's per-channel rate bucket.
-  let hasPosted = false;
+
+  function armTimer(): void {
+    if (timerHandle !== null) return;
+    timerHandle = timer.setTimeout(() => {
+      timerHandle = null;
+      enqueueFlush();
+    }, intervalMs);
+  }
+
+  function clearTimer(): void {
+    if (timerHandle === null) return;
+    timer.clearTimeout(timerHandle);
+    timerHandle = null;
+  }
 
   function enqueueFlush(): void {
     writeChain = writeChain
       .then(async () => {
         const bufferBefore = buffer;
         await flushNow();
-        // After the flush settles, rebase the next tick to fire
-        // editDebounceMs from NOW (flush completion), not from the next
-        // delta. Cancels any timer a delta armed during the flush's
-        // await so the cadence is "~1s between flushes" instead of
-        // drifting with REST latency. Skip when ending — end() drives
-        // its own drain loop without debounce.
+        // Rebase the next tick to fire intervalMs from THIS flush's
+        // completion, not from the next delta. If a delta armed a
+        // timer during the flush's await, replace it; otherwise this
+        // is just the post-flush re-arm. Either way, the cadence is
+        // "intervalMs after each flush settles" rather than drifting.
         if (buffer !== bufferBefore && !ending) {
-          scheduler.clear();
-          scheduler.schedule(editDebounceMs);
+          clearTimer();
+          armTimer();
         }
       })
       .catch((error) => {
@@ -160,20 +143,11 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
       return;
     }
 
-    // Commit to the slower edit-debounce as soon as we have content to
-    // deliver. If we waited until the post resolved, deltas arriving in
-    // the post's await window would see hasPosted=false and schedule
-    // with the initial-post debounce — bursting edits as soon as the
-    // post lands. Setting it here is sticky-correct: any post we're
-    // about to attempt is no longer the "first contact" delay regime.
-    hasPosted = true;
-
     // Try to seal if we're past the soft limit (in rendered chars).
     if (prep.rendered.length > softLimit) {
       const force = ending || prep.rendered.length > hardLimit;
       const split = findSafeSplit(prep, { softLimit, hardLimit, force });
       if (split !== null) {
-        // Seal current message (or post split.keep fresh if no current).
         if (currentMessageId !== null) {
           if (split.keepRendered !== lastSentContent && split.keepRendered.length > 0) {
             try {
@@ -196,8 +170,8 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
         if (buffer.length > 0) enqueueFlush();
         return;
       }
-      // No clean seam and not forced. Fall through and just edit/post
-      // with what we have; we'll try again on the next delta.
+      // No clean seam and not forced. Fall through and edit/post with
+      // what we have; the next delta will trigger another attempt.
     }
 
     if (currentMessageId === null) {
@@ -226,17 +200,12 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   function append(delta: string): void {
     if (delta.length === 0) return;
     buffer += delta;
-    // Initial-post debounce is short to keep first-token latency low; once
-    // any message has been posted we use the longer edit debounce so the
-    // edit cadence stays inside Discord's per-channel rate bucket. Mid-
-    // stream seal/post sequences flip currentMessageId back to null
-    // briefly — those still want the edit debounce, not the initial one.
-    scheduler.schedule(hasPosted ? editDebounceMs : initialPostDelayMs);
+    armTimer();
   }
 
   async function end(): Promise<void> {
     ending = true;
-    scheduler.clear();
+    clearTimer();
     // Drain: keep flushing until the buffer is empty (or stops shrinking).
     enqueueFlush();
     await writeChain;
@@ -250,12 +219,11 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
   }
 
   function reset(): void {
-    scheduler.clear();
+    clearTimer();
     buffer = "";
     currentMessageId = null;
     lastSentContent = "";
     ending = false;
-    hasPosted = false;
   }
 
   function getPostedMessageIds(): readonly string[] {
