@@ -7,7 +7,7 @@
  * until a human posted there.
  */
 import type { AnyThreadChannel, Client, GuildTextBasedChannel } from "discord.js";
-import { defineTool } from "@mariozechner/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const threadAutoArchiveMinutes = 1440;

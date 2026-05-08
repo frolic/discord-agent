@@ -11,7 +11,7 @@
  * map to tracker calls; swapping the agent layer would only require
  * rewriting this one file.
  */
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { deliveryToolNameSet } from "../agent/deliveryTools.ts";
 import type { ActiveTracker } from "./createActiveTracker.ts";
 

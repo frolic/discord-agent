@@ -14,7 +14,7 @@
  * Replaces `installEnvelopeEnforcement`. The "envelope" is now the
  * assistant text stream itself; raw text IS the visible reply.
  */
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { DiscordSender } from "../io/createDiscordSender.ts";
 import type { StreamingDispatcher } from "../streaming/createStreamingDispatcher.ts";
 

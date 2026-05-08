@@ -9,7 +9,7 @@
  *
  * Pi reads its own configuration (`settings.json`, `models.json`,
  * `auth.json`, `AGENTS.md`, etc.) from the same `agentDir`. See
- * https://github.com/badlogic/pi-mono/blob/v0.72.1/packages/coding-agent/docs/settings.md
+ * https://github.com/earendil-works/pi/blob/v0.74.0/packages/coding-agent/docs/settings.md
  * for the full list of pi-side knobs (model defaults, compaction, retry,
  * skill paths, etc.) — none of those need our env vars.
  */

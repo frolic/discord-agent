@@ -6,7 +6,7 @@
  * channel ID the agent supplies and lets the API reject if disallowed.
  */
 import type { Client } from "discord.js";
-import { defineTool } from "@mariozechner/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { formatMessage } from "../formatMessage.ts";
 

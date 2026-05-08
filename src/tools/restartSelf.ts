@@ -18,7 +18,7 @@
  * equivalent is the `!restart` command in the router.
  */
 import type { Client } from "discord.js";
-import { defineTool } from "@mariozechner/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { ActiveTracker } from "../active/createActiveTracker.ts";
 import { postDebugLine } from "../io/postDebugLine.ts";
