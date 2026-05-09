@@ -4,13 +4,3 @@ node_modules/
 
 # Build output
 dist/
-
-# Local secrets — only present if someone runs the bot with the framework
-# repo's root as the agent home (an unsupported but possible dev shortcut).
-.env
-auth.json
-
-# Per-channel runtime state lives in the agent home, not here. The
-# agent-template/.gitignore handles that layer — and because git
-# respects nested .gitignore files, it also ignores runtime under
-# agent-template/ itself if that dir is used as a dev agent home.
