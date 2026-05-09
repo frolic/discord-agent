@@ -36,6 +36,28 @@ describe("prepareForDelivery — block separators", () => {
   });
 });
 
+describe("prepareForDelivery — GFM round-trip", () => {
+  test("strikethrough round-trips without crashing the stringifier", () => {
+    // Regression: parser was loaded with remark-gfm but stringifier
+    // wasn't, so `delete` (mdast for ~~strike~~) crashed
+    // mdast-util-to-markdown with "Cannot handle unknown node `delete`".
+    // Verify both sides handle it now.
+    const result = prepareForDelivery("I ~~strikethrough~~ this.");
+    expect(result.rendered).toBe("I ~~strikethrough~~ this.");
+  });
+
+  test("strikethrough inside list items survives", () => {
+    const result = prepareForDelivery("- one\n- ~~struck~~\n- three");
+    expect(result.rendered).toContain("~~struck~~");
+  });
+
+  test("mixed inline marks (bold + strikethrough) round-trip", () => {
+    const result = prepareForDelivery("Here: ~~old~~ → **new**");
+    expect(result.rendered).toContain("~~old~~");
+    expect(result.rendered).toContain("**new**");
+  });
+});
+
 describe("prepareForDelivery — basic shape", () => {
   test("empty input → empty result", () => {
     const result = prepareForDelivery("");

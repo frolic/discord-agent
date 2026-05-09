@@ -89,16 +89,28 @@ const parser = unified().use(remarkParse).use(remarkGfm);
  * - `*italic*` (over `_italic_`, same reason)
  * - Fenced code blocks (over indented), with backtick fences
  * - Hyphen list bullets
+ *
+ * `remark-gfm` is loaded on both the parser AND the stringifier. The
+ * parser side recognizes GFM constructs; the stringifier side
+ * registers handlers that know how to serialize them back to markdown.
+ * Without it on the stringifier, AST nodes the parser produced (e.g.
+ * `delete` for `~~strikethrough~~`, `table`, `footnoteDefinition`)
+ * crash `mdast-util-to-markdown` with "Cannot handle unknown node".
+ * Tables don't normally hit this because `transformTables` rewrites
+ * them to plain `code` nodes before stringify; strikethrough does
+ * because we don't transform it.
  */
-const stringifier = unified().use(remarkStringify, {
-  emphasis: "*",
-  strong: "*",
-  bullet: "-",
-  fence: "`",
-  fences: true,
-  rule: "-",
-  listItemIndent: "one",
-});
+const stringifier = unified()
+  .use(remarkGfm)
+  .use(remarkStringify, {
+    emphasis: "*",
+    strong: "*",
+    bullet: "-",
+    fence: "`",
+    fences: true,
+    rule: "-",
+    listItemIndent: "one",
+  });
 
 export function prepareForDelivery(rawBuffer: string): PreparedDelivery {
   if (rawBuffer.length === 0) return { rendered: "", blocks: [] };
