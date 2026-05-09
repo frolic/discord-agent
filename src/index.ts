@@ -26,7 +26,7 @@ const client = new Client({
   ...(config.discordApiUrl ? { rest: { api: config.discordApiUrl } } : {}),
 });
 
-const tracker = createActiveTracker({ activeStateFile: resolve(config.agentDir, "active.json") });
+const tracker = createActiveTracker({ activeStateFile: resolve(config.agentDir, "active-sessions.json") });
 const pool = createAgentPool({ client, tracker });
 installRouter({ client, pool, tracker });
 

@@ -142,10 +142,14 @@ async function runSetup(): Promise<void> {
   }
 
   // Templates: SYSTEM.md and AGENTS.md ship the persona starting points;
-  // .env.example is helpful for adding optional vars later.
+  // .env.example is helpful for adding optional vars later; .gitignore
+  // pre-ignores the runtime files (`.env`, `auth.json`, `sessions/`,
+  // `workspaces/`, `active-sessions.json`) so a freshly-initialized
+  // agent home is git-clean from the start.
   copyTemplate("SYSTEM.md", agentHome);
   copyTemplate("AGENTS.md", agentHome);
   copyTemplate(".env.example", agentHome);
+  copyTemplate(".gitignore", agentHome);
 
   writeFileSync(
     resolve(agentHome, ".env"),

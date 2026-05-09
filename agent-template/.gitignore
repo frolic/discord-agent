@@ -1,0 +1,14 @@
+# Runtime state for an agent home — created by the bot at runtime,
+# never hand-edited. Keep these untracked so a freshly cloned agent
+# repo starts in a clean state.
+
+# Secrets
+.env
+auth.json
+
+# Per-channel state (created on first contact with each channel)
+sessions/
+workspaces/
+
+# Harness state
+active-sessions.json
