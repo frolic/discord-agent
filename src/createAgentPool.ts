@@ -8,12 +8,16 @@
  * - `DiscordSender` — the bot's outbound user-channel writes: streamed
  *   text dispatchers, file attachments via the `attach` tool, error
  *   surfacing.
- * - `DebugLogger` — operational logging in the debug channel; subscribes
- *   to `message_end` for usage tracking.
+ * - `DebugLogger` — operational logging in the debug channel; pure
+ *   subscriber to session events (`tool_execution_start/end`,
+ *   `message_end`, `compaction_start/end`). Posts start, failure,
+ *   usage, and compaction lines without the call sites needing to know,
+ *   which means extension-registered tools (e.g. memory's `remember`)
+ *   are logged uniformly with built-ins and harness customs.
  * - `TypingIndicator` — the typing-dots UX, self-contained.
  *
- * Each subsystem owns a narrow slice; `withToolLogging` only sees the
- * `DebugLogger`, the attach tool only sees the `DiscordSender`. The
+ * Each subsystem owns a narrow slice; the attach tool only sees the
+ * `DiscordSender`, the debug logger only sees session events. The
  * streaming-sender install (`installStreamingSender`) routes assistant
  * text deltas into the sender and surfaces errors that fall outside the
  * normal tool path.
@@ -45,7 +49,6 @@ import { collectImageAttachments } from "./collectImageAttachments.ts";
 import { formatMessage } from "./formatMessage.ts";
 import { buildPromptOptions } from "./agent/buildPromptOptions.ts";
 import { harnessRules } from "./agent/prompts.ts";
-import { withToolLogging } from "./agent/withToolLogging.ts";
 import { installStreamingSender } from "./agent/installStreamingSender.ts";
 import { installActiveTracker } from "./active/installActiveTracker.ts";
 import type { ActiveTracker } from "./active/createActiveTracker.ts";
@@ -90,38 +93,38 @@ interface PoolEntry {
  * tools (attach/react/history/thread/restart_self). Plain text replies
  * stream automatically — no envelope tool needed.
  *
- * Every tool is run through `withToolLogging` so each call gets a start-
- * line in the log channel and a follow-up failure-line (threaded as a
- * Discord reply) when the result `isError`.
+ * Tool-call logging happens in `DebugLogger` via session-event subscription,
+ * so this function doesn't need per-tool wrapping.
  *
- * Each `withToolLogging` call is inlined rather than going through a
- * wrapping helper because pi's typed tool builders return concrete
+ * The array is widened to `ToolDefinition[]` (the default-typed bare form)
+ * via a single cast at the end. Pi's typed builders return concrete
  * `ToolDefinition<TObject<…>, …>` types, and TypeScript's variance rules
  * around `renderCall(args: Static<TParams>, …)` reject collapsing them
- * through a single `ToolDefinition<any>` waypoint. Inlining lets each
- * call pick its own generic instantiation.
+ * through a single `ToolDefinition<TSchema, unknown, any>` waypoint.
+ * One widening cast at the array level is the cheapest expression of
+ * "we know these all satisfy pi's customTools contract" — pi itself
+ * accepts this shape.
  */
 function buildTools(args: {
   client: Client;
   channelId: string;
   workspaceDir: string;
   sender: DiscordSender;
-  logger: DebugLogger;
   tracker: ActiveTracker;
   wakeUp: (channelId: string, prompt: string) => Promise<void>;
 }): ToolDefinition[] {
-  const { client, channelId, workspaceDir, sender, logger, tracker, wakeUp } = args;
+  const { client, channelId, workspaceDir, sender, tracker, wakeUp } = args;
   return [
-    withToolLogging(createBashToolDefinition(workspaceDir), logger),
-    withToolLogging(createReadToolDefinition(workspaceDir), logger),
-    withToolLogging(createWriteToolDefinition(workspaceDir), logger),
-    withToolLogging(createEditToolDefinition(workspaceDir), logger),
-    withToolLogging(createAttachTool({ sender }), logger),
-    withToolLogging(createReactTool({ client, channelId }), logger),
-    withToolLogging(createHistoryTool({ client, channelId }), logger),
-    withToolLogging(createThreadTool({ client, channelId, wakeUp }), logger),
-    withToolLogging(createRestartSelfTool({ client, channelId, tracker }), logger),
-  ];
+    createBashToolDefinition(workspaceDir),
+    createReadToolDefinition(workspaceDir),
+    createWriteToolDefinition(workspaceDir),
+    createEditToolDefinition(workspaceDir),
+    createAttachTool({ sender }),
+    createReactTool({ client, channelId }),
+    createHistoryTool({ client, channelId }),
+    createThreadTool({ client, channelId, wakeUp }),
+    createRestartSelfTool({ client, channelId, tracker }),
+  ] as unknown as ToolDefinition[];
 }
 
 export interface AgentPool {
@@ -210,11 +213,11 @@ export function createAgentPool(args: {
     await mkdir(workspaceDir, { recursive: true });
 
     const sender = createDiscordSender({ client, channelId });
-    // Logger is constructed BEFORE the session because tools (built next)
-    // need to capture it via `withToolLogging`. Everything the logger
-    // needs *post*-session is deferred via callbacks — the logger captures
-    // `subscribe` and `getContextUsage` closures, and we attach the
-    // session once it exists.
+    // Logger is constructed BEFORE the session because we want a single
+    // shared `DebugLogger` reference the pool entry can hold even if
+    // session creation fails. Post-session bindings (`subscribe`,
+    // `getContextUsage`) are deferred via closures so the logger doesn't
+    // need the session at construction time.
     let sessionRef: AgentSession | null = null;
     let attachLoggerToSession: (session: AgentSession) => void = () => {};
     const logger = createDebugLogger({
@@ -248,12 +251,13 @@ export function createAgentPool(args: {
     const { session } = await createAgentSessionFromServices({
       services,
       sessionManager,
-      // Disable pi's auto-registered defaults so we can wrap every tool
-      // (custom + builtin) with `withToolLogging` for uniform start/failure
-      // logging in the debug channel. The defaults are reconstructed via
-      // pi's exported factories below, using this channel's workspace as cwd.
+      // Disable pi's auto-registered defaults so the harness reconstructs
+      // each built-in tool with this channel's workspace as cwd. Tool-call
+      // logging happens via session-event subscription in `DebugLogger`,
+      // not per-tool wrapping — so the customTools list passes through
+      // unwrapped.
       noTools: "builtin",
-      customTools: buildTools({ client, channelId, workspaceDir, sender, logger, tracker, wakeUp }),
+      customTools: buildTools({ client, channelId, workspaceDir, sender, tracker, wakeUp }),
     });
 
     // Wire the deferred bindings now that the session exists.

@@ -6,23 +6,25 @@
  * level lifecycle events (startup, shutdown) go through `postDebugLine`
  * instead — see `src/io/postDebugLine.ts`.
  *
- * Owns the per-call usage suffix — subscribes via the caller-provided
- * `subscribe` function and reads usage off each `message_end` event.
+ * Pure subscriber. The caller hands us a `subscribe` callback that we
+ * use to listen on `tool_execution_start` / `tool_execution_end` /
+ * `message_end` / `compaction_start` / `compaction_end`. We post the
+ * appropriate line for each. This covers ALL tools the session executes
+ * — built-in, harness customs, and extension-registered (e.g.
+ * `remember`) — uniformly, without per-tool wrapping. Failures thread
+ * as Discord replies to their start line via a `toolCallId`-keyed map
+ * holding the start-log message ID promise.
  *
  * Why the caller passes a `subscribe` function (instead of a session
- * directly): the session itself needs the logger at *creation* time
- * (tools are wrapped with `withToolLogging` which holds a logger
- * reference), so the logger has to exist before the session does.
- * Threading a `subscribe` callback that the caller can fulfill *after*
- * the session is created keeps the logger's lifecycle hidden from its
- * public surface — the wrapper only sees the three logging methods, not
- * the session-event plumbing.
+ * directly): the logger is constructed before the session exists — pi
+ * resolves model + extensions during `createAgentSession`, but we want
+ * a single shared `DebugLogger` instance the pool can refer to from
+ * the moment the channel is acquired. Threading a `subscribe` callback
+ * lets the pool wire it to `session.subscribe(...)` once the session
+ * is built.
  *
  * Why a separate module from `DiscordSender`:
  * - Different *target channel* (`config.debugChannelId`, may be unset).
- * - Different *consumer* — only `withToolLogging` calls these methods,
- *   and decoupling the audit interface lets the wrapper depend on a
- *   narrow `DebugLogger` instead of the full harness surface.
  * - Different *failure model* — silently no-ops when no debug channel is
  *   configured, whereas `DiscordSender` always has a channel.
  *
@@ -54,26 +56,9 @@ const hardCharLimit = 1990;
 /** Summary preview length on the post-compaction log line. Anything longer is truncated with an ellipsis. */
 const compactionSummaryPreviewLimit = 120;
 
-interface PostToolStartArgs {
-  toolCallId: string;
-  toolName: string;
-  args: unknown;
-}
-
-interface PostToolFailureArgs {
-  /** Debug-channel message ID returned by `postToolStart`; used as the reply target for visual threading. May be null when the start-log send failed or no debug channel is configured. */
-  replyTo: string | null;
-  toolName: string;
-  result: unknown;
-}
-
 export interface DebugLogger {
   /** Set the source-message URL for the *current* run — every subsequent tool start log will link to it until the next `setSourceMessageUrl` call. */
   setSourceMessageUrl(url: string): void;
-  /** Post the "starting tool X with args Y" debug line. Returns the resulting Discord message ID (or null if the log send failed / no debug channel is configured) so a follow-up `postToolFailure` can thread as a reply. */
-  postToolStart(args: PostToolStartArgs): Promise<string | null>;
-  /** Post the failure follow-up line, threaded as a reply to the start log. */
-  postToolFailure(args: PostToolFailureArgs): Promise<void>;
 }
 
 type SessionEventHandler = (event: AgentSessionEvent | AgentEvent) => void;
@@ -141,13 +126,41 @@ export function createDebugLogger(args: {
   // compaction_end.
   let pendingCompactionStartLog: Promise<string | null> | null = null;
 
+  // Per-tool-call start-log message IDs (as Promises so a fast-finishing
+  // tool's end event can thread its failure even if the start-log send
+  // is still in flight). Keyed by `toolCallId`, which pi assigns once
+  // per tool invocation and echoes on both `tool_execution_start` and
+  // `tool_execution_end`. Cleared on the matching end event so the map
+  // doesn't accumulate over a long session.
+  const pendingToolStartLogs = new Map<string, Promise<string | null>>();
+
   // Wire the subscription via the caller-supplied callback. We dispatch
-  // on three event types: `message_end` for usage tracking, plus
-  // `compaction_start` / `compaction_end` for compaction logging. Every
-  // other event falls through to a no-op.
+  // on five event types:
+  //   - `message_end`           → usage tracking (the per-call cost suffix)
+  //   - `tool_execution_start`  → "starting tool X with args Y" line
+  //   - `tool_execution_end`    → failure follow-up if isError
+  //   - `compaction_start`/`compaction_end` → compaction lifecycle pair
+  // Every other event falls through to a no-op. Doing tool logging here
+  // (instead of wrapping each `ToolDefinition` at the call site) covers
+  // ALL tools the session executes — built-in, harness customs, AND
+  // extension-registered (e.g. memory's `remember`) — without per-tool
+  // wrapping at construction time.
   subscribe((event) => {
     if (event.type === "message_end" && isAssistantMessageEnd(event.message)) {
       recordCallUsage(event.message);
+      return;
+    }
+    if (event.type === "tool_execution_start") {
+      pendingToolStartLogs.set(
+        event.toolCallId,
+        postToolStart({ toolCallId: event.toolCallId, toolName: event.toolName, args: event.args }),
+      );
+      return;
+    }
+    if (event.type === "tool_execution_end") {
+      const startLog = pendingToolStartLogs.get(event.toolCallId);
+      pendingToolStartLogs.delete(event.toolCallId);
+      if (event.isError) postToolFailure({ startLog, toolName: event.toolName, result: event.result });
       return;
     }
     if (event.type === "compaction_start") {
@@ -225,7 +238,11 @@ export function createDebugLogger(args: {
     });
   }
 
-  async function postToolStart(args: PostToolStartArgs): Promise<string | null> {
+  async function postToolStart(args: {
+    toolCallId: string;
+    toolName: string;
+    args: unknown;
+  }): Promise<string | null> {
     const channel = await getDebugChannel();
     if (!channel) return null;
     // Prefer linking the specific source message; fall back to the channel
@@ -245,15 +262,23 @@ export function createDebugLogger(args: {
     return sent?.id ?? null;
   }
 
-  async function postToolFailure(args: PostToolFailureArgs): Promise<void> {
+  async function postToolFailure(args: {
+    /** Promise of the start-log message ID, used as the reply target so the failure threads as a Discord reply to its corresponding start line. May resolve to null if the start-log send failed or no debug channel was configured. */
+    startLog: Promise<string | null> | undefined;
+    toolName: string;
+    result: unknown;
+  }): Promise<void> {
     const channel = await getDebugChannel();
     if (!channel) return;
     const errorText = extractToolErrorText(args.result);
     const text = `-# ❌ ${args.toolName} failed: ${errorText}`.slice(0, hardCharLimit);
+    // Await the start-log promise so we get the resolved message ID
+    // even if its send was still in flight when this fired.
+    const replyTo = args.startLog ? await args.startLog : null;
     await sendDebugMessage({
       channel,
       content: text,
-      replyTo: args.replyTo ?? undefined,
+      replyTo: replyTo ?? undefined,
       errorContext: "tool failure post failed",
     });
   }
@@ -262,7 +287,5 @@ export function createDebugLogger(args: {
     setSourceMessageUrl(url: string): void {
       sourceMessageUrl = url;
     },
-    postToolStart,
-    postToolFailure,
   };
 }
