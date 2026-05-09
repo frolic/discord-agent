@@ -11,7 +11,8 @@ any number of agents.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) ≥ 1.1
+- [Bun](https://bun.sh) ≥ 1.1 — runs the harness itself.
+- [Node.js](https://nodejs.org) ≥ 20 — recommended even though the harness uses Bun. The agent runs npm-distributed CLIs over bash for many real tasks (search scrapers, browser automation, format converters), and most have `#!/usr/bin/env node` shebangs or call `node` internally. A Bun-only environment will fail those silently. If you're installing via a setup agent (Shelley, etc.), make sure Node lands too — `bun install` alone isn't enough.
 - A Discord account (you'll create a bot application)
 - An LLM API key from any [pi-supported provider](https://github.com/earendil-works/pi/blob/v0.74.0/packages/ai/README.md#supported-providers) — Anthropic, OpenAI, DeepSeek, OpenRouter, Google, etc.
 
