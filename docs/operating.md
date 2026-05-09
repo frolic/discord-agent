@@ -40,7 +40,7 @@ The agent home is the cwd you launch the bot from (or whatever you point
   auth.json                           # pi's credential store (created by pi if a user runs `/login`)
   sessions/<channelId>.jsonl          # one file per Discord channel/thread
   workspaces/<channelId>/             # agent's cwd for that channel
-  active.json                         # per-channel work-state for restart recovery
+  active-sessions.json                # per-channel work-state for restart recovery
 ```
 
 Threads share the structure with channels — Discord treats a thread as a

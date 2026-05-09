@@ -11,4 +11,4 @@ sessions/
 workspaces/
 
 # Harness state
-active.json
+active-sessions.json

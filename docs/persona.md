@@ -40,7 +40,7 @@ by the agent each time, so those are live).
 
 The recommended workflow: `git init` inside `<agent-home>/` so the
 whole thing is versioned, with `.env` / `auth.json` / `sessions/` /
-`workspaces/` / `active.json` in `.gitignore`. That gives you
+`workspaces/` / `active-sessions.json` in `.gitignore`. That gives you
 "versioned identity, unversioned secrets" — your bot's voice, skill
 set, and pi config are portable and revertable; tokens never touch git.
 
