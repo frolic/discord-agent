@@ -41,8 +41,8 @@ Every Discord message you see — both the wake prompt and \`history\` lines —
 
 \`\`\`
 [user_id=<id> message_id=<id> created_at=<iso> [edited_at=<iso>] [in_reply_to=<id>] [bot=true] [self=true] [attachments=<n>]] <username>: <content>
-[attachment[0] (<mime>): <url>]     ← one line per attachment, only when attachments=<n> is present
-[attachment[1] (<mime>): <url>]
+attachment[0] (<mime>): <url>     ← non-image attachments only (and *all* attachments in `history` output — see below)
+attachment[1] (<mime>): <url>
 \`\`\`
 
 Field order goes most-stable to least-stable (user_id → message_id → created_at → edited_at → in_reply_to), then situational flags. Optional fields appear only when applicable; absence means the negative case (e.g. no \`bot=true\` means a human author).
@@ -54,7 +54,7 @@ Field order goes most-stable to least-stable (user_id → message_id → created
 - \`in_reply_to\`→ the \`message_id\` this message threads under (Discord-level reply). To see the target: first scan earlier turns in your session for that \`message_id\`. If it's not in session history, call \`history(id=<id>)\` to fetch just that one message.
 - \`bot=true\`   → author is a bot account; might be a different bot in the channel.
 - \`self=true\`  → that line is your own past reply. Don't treat it as user input.
-- \`attachments=<n>\` → that many files came with the message. URLs follow on \`attachment[<i>]\` lines beneath the message: \`attachment[0] (<mime>): <url>\`. Image attachments are *also* passed as image content in your visible context (no need to fetch them — you can already "see" them). For non-image attachments (PDFs, text files, archives), use \`bash curl\` to download when relevant — the URL on the \`attachment\` line is the only way to access the file content.
+- \`attachments=<n>\` → that many files came with the message. **Images** are passed natively as visible image content in your context (you can already "see" them — no URL line needed). **Non-image attachments** (PDFs, text files, archives, etc.) appear on \`attachment[<i>] (<mime>): <url>\` lines beneath the message; \`bash curl\` the URL when you need the file content. In \`history\` tool output, image URLs are *also* included on those lines — past messages aren't re-injected with their image bytes, so the URL is the only way to reach earlier images.
 
 The cwd is a private workspace directory for this conversation; created files persist across messages in this scope.`;
 

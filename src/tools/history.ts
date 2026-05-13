@@ -69,7 +69,15 @@ export function createHistoryTool(args: { client: Client; channelId: string }) {
       if (params.id) {
         const message = await channel.messages.fetch(params.id);
         return {
-          content: [{ type: "text", text: formatMessage(message, selfUserId) }],
+          content: [
+            {
+              type: "text",
+              // Past messages aren't re-injected with their image content,
+              // so include image URLs here so the agent can still reach
+              // them via `bash curl` if needed.
+              text: formatMessage(message, selfUserId, { includeImageUrls: true }),
+            },
+          ],
           details: { count: 1, oldestId: message.id, channelId: targetChannelId },
         };
       }
@@ -81,8 +89,11 @@ export function createHistoryTool(args: { client: Client; channelId: string }) {
       });
 
       // Discord returns newest-first; reverse for chronological reading.
+      // Same `includeImageUrls` reasoning as the single-message path above.
       const chronological = [...fetched.values()].reverse();
-      const lines = chronological.map((message) => formatMessage(message, selfUserId));
+      const lines = chronological.map((message) =>
+        formatMessage(message, selfUserId, { includeImageUrls: true }),
+      );
       const text = lines.length > 0 ? lines.join("\n") : "(no messages in this range)";
 
       return {

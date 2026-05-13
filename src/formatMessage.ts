@@ -5,9 +5,18 @@
  * Header format (always one line):
  *   [user_id=<id> message_id=<id> created_at=<iso>[ edited_at=<iso>][ in_reply_to=<id>][ bot=true][ self=true][ attachments=<n>]] <username>: <content>
  *
- * If the message has attachments, one extra line per attachment follows
- * the header, listing mime type and CDN URL:
+ * For non-image attachments, one extra line per attachment follows the
+ * header so the agent can fetch them via `bash curl`:
  *   attachment[<i>] (<mime>): <url>
+ *
+ * Image attachments are *not* listed in the header by default — they're
+ * passed natively via `PromptOptions.images` on the wake path
+ * (`collectImageAttachments` → pi-ai image content blocks). Listing image
+ * URLs in the prompt text on top of that would be redundant: the model
+ * already sees the image directly in its visible context. The
+ * `includeImageUrls` option flips this back on for the `history` tool —
+ * past messages aren't re-fetched with their image content re-injected,
+ * so the URL is the only reference the agent has to past images.
  *
  * The header keeps a fixed field order — most-stable to least-stable
  * (user_id → message_id → created_at → edited_at → in_reply_to), then
@@ -33,12 +42,10 @@
  *                   agent tell its own past replies apart from other
  *                   bots' messages, since `bot=true` alone collapses the
  *                   two.
- * - `attachments=<n>` — number of files. URLs follow on `attachment[i]`
- *                   lines. Image attachments are *also* passed through
- *                   as image content in the visible context (so the model
- *                   can "see" them); for non-image attachments the URL
- *                   is the only way to access the file — use `bash curl`
- *                   to fetch when relevant.
+ * - `attachments=<n>` — number of files. Non-image URLs follow on
+ *                   `attachment[i]` lines; image attachments are passed
+ *                   separately as native image content on the wake path
+ *                   (see `collectImageAttachments`).
  *
  * `selfUserId` is passed in (rather than read from a global) so the
  * function stays pure — the only Discord state it touches is what's on
@@ -46,7 +53,29 @@
  */
 import type { Message } from "discord.js";
 
-export function formatMessage(message: Message, selfUserId: string): string {
+export interface FormatMessageOptions {
+  /**
+   * Include URL lines for image attachments in the rendered output.
+   *
+   * - Wake/steer path (default `false`): images flow through
+   *   `PromptOptions.images` as native image content blocks. The model
+   *   sees the image directly; the URL would be redundant noise.
+   * - `history` tool (`true`): past messages aren't re-injected with
+   *   their image content, so the URL is the only handle the agent has
+   *   to image attachments from earlier messages. The agent can `bash
+   *   curl` if it needs the bytes.
+   *
+   * Non-image attachment URLs are always included regardless — there's
+   * no native delivery channel for them.
+   */
+  includeImageUrls?: boolean;
+}
+
+export function formatMessage(
+  message: Message,
+  selfUserId: string,
+  options: FormatMessageOptions = {},
+): string {
   const fields: string[] = [
     `user_id=${message.author.id}`,
     `message_id=${message.id}`,
@@ -65,12 +94,20 @@ export function formatMessage(message: Message, selfUserId: string): string {
   const header = `[${fields.join(" ")}] ${message.author.username}: ${message.content}`;
   if (message.attachments.size === 0) return header;
 
-  // Append one URL line per attachment so the agent can fetch non-image
-  // files via `bash curl`. Listing image attachments too keeps the shape
-  // uniform; the agent can reference originals when it needs to (the
-  // visible image content is sufficient for "seeing" them).
-  const attachmentLines = [...message.attachments.values()]
-    .map((attachment, index) => {
+  // Skip images by default — they come through the native PromptOptions.images
+  // channel on the wake path and don't need to be referenced as URLs in the
+  // prompt text. Override via `includeImageUrls` for paths that don't
+  // re-inject image content (e.g., the `history` tool).
+  const renderableAttachments = [...message.attachments.values()]
+    .map((attachment, index) => ({ attachment, index }))
+    .filter(({ attachment }) => {
+      if (!attachment.contentType?.startsWith("image/")) return true;
+      return options.includeImageUrls === true;
+    });
+  if (renderableAttachments.length === 0) return header;
+
+  const attachmentLines = renderableAttachments
+    .map(({ attachment, index }) => {
       const mime = attachment.contentType ?? "application/octet-stream";
       return `attachment[${index}] (${mime}): ${attachment.url}`;
     })
