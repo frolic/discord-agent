@@ -101,8 +101,10 @@ export function formatMessage(
   const renderableAttachments = [...message.attachments.values()]
     .map((attachment, index) => ({ attachment, index }))
     .filter(({ attachment }) => {
-      if (!attachment.contentType?.startsWith("image/")) return true;
-      return options.includeImageUrls === true;
+      if (attachment.contentType?.startsWith("image/")) {
+        return options.includeImageUrls === true;
+      }
+      return true;
     });
   if (renderableAttachments.length === 0) return header;
 
