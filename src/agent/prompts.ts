@@ -41,7 +41,7 @@ Every Discord message you see — both the wake prompt and \`history\` lines —
 
 \`\`\`
 [user_id=<id> message_id=<id> created_at=<iso> [edited_at=<iso>] [in_reply_to=<id>] [bot=true] [self=true] [attachments=<n>]] <username>: <content>
-attachment[0] (<mime>): <url>     ← non-image attachments only (and *all* attachments in `history` output — see below)
+attachment[0] (<mime>): <url>     ← non-image attachments only (and *all* attachments in \`history\` output — see below)
 attachment[1] (<mime>): <url>
 \`\`\`
 
