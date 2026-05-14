@@ -147,7 +147,7 @@ take absolute paths), then run the same `cp` / `daemon-reload` /
 `enable --now` sequence above. The wizard reads this same template and
 substitutes the placeholders for you.
 
-Three things in the template that matter for self-restarting agents:
+Two things in the template that matter for self-restarting agents:
 
 - **`StartLimitIntervalSec=0`** disables systemd's restart rate limit. By
   default, systemd marks a service `failed` after 5 restarts in 10s. Tight
@@ -156,9 +156,41 @@ Three things in the template that matter for self-restarting agents:
 - **`Restart=always`** restarts on any exit *including* clean
   `process.exit(0)` — which is what the agent calls when self-restarting.
   `Restart=on-failure` would only respawn on non-zero exits.
-- **`ReadWritePaths`** lists both the agent home (sessions, workspaces)
-  AND the framework source repo, so the agent can edit its own code under
-  the hardening profile.
+
+### Optional: stricter hardening
+
+The shipped template only sets `NoNewPrivileges=true` because the
+namespace-based directives (`ProtectSystem=strict`, `ProtectHome=read-only`,
+`ReadWritePaths=`, `PrivateTmp=true`) silently break on hosts where systemd
+can't set up mount namespaces — containers, some cloud VMs (observed on
+exe.dev), and minimal Linux distros. The failure mode is unhelpful: `/tmp`
+ends up read-only or writes to the agent home fail despite `ReadWritePaths`
+listing it, and you only notice when the bot crashes on the first request.
+
+On hosts where it does work (Debian/Ubuntu on bare VMs, most Hetzner /
+DigitalOcean / EC2 instances), add the hardening as a drop-in override
+instead of editing the unit file — that way `git pull` updates to the
+template don't clobber it:
+
+```bash
+sudo systemctl edit <bot>-discord-agent
+```
+
+Then paste:
+
+```ini
+[Service]
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=<absolute path to agent home> <absolute path to discord-agent source>
+PrivateTmp=true
+```
+
+Save, `sudo systemctl restart <bot>-discord-agent`, then send the bot a
+test message. If it crashes with `ReadOnlyFileSystem` or similar, the
+host doesn't support the namespace setup — `sudo systemctl edit
+--full <bot>-discord-agent` to remove the override, or delete
+`/etc/systemd/system/<bot>-discord-agent.service.d/override.conf`.
 
 ## Self-modification
 
