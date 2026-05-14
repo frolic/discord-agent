@@ -1,5 +1,6 @@
 # Template systemd unit for discord-agent. `bun run setup` substitutes the
-# placeholders automatically; for the by-hand path see docs/manual-setup.md.
+# placeholders automatically; for the by-hand path see
+# https://github.com/frolic/discord-agent/blob/main/docs/manual-setup.md.
 #
 # Placeholders (every doubled-brace marker below — fill in or let setup do it):
 #   BOT_NAME    — friendly name shown in `systemctl status`
@@ -44,9 +45,9 @@ StandardError=journal
 # where systemd can't set up mount namespaces (containers, some cloud
 # VMs). Symptoms include /tmp becoming read-only and writes to the
 # agent home failing despite ReadWritePaths. NoNewPrivileges is
-# namespace-free and stable everywhere. See docs/operating.md for the
-# stricter hardening block to add via `systemctl edit` on hosts that
-# support it.
+# namespace-free and stable everywhere. To opt back into the stricter
+# block via `systemctl edit` on hosts that support it, see
+# https://github.com/frolic/discord-agent/blob/main/docs/operating.md#optional-stricter-hardening.
 NoNewPrivileges=true
 
 [Install]
