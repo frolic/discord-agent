@@ -33,7 +33,7 @@ export function createThreadTool(args: {
       parent_message_id: Type.Optional(
         Type.String({
           description:
-            "optional: spawn the thread off a specific message ID in the current channel (Discord 'create thread on message'). If omitted, the thread is created at the channel root.",
+            "OPTIONAL — default is to OMIT. Spawns the thread off a specific message ID in the current channel (Discord 'create thread on message'). Only set this when the new thread is a direct reply to a *specific recent message the user just sent* that they'd recognize as the obvious parent (e.g., they pointed at one message and said 'investigate this'). Do NOT pick the first message in the session, the message that started the conversation, or 'the closest relevant message you can find' — those are almost always wrong and create a confusing parent-thread link in Discord (the thread appears as a reply to something unrelated). If you're not certain which specific message would be the parent, OMIT this parameter; the thread is created at the channel root, which is correct for almost all cases.",
         }),
       ),
     }),
