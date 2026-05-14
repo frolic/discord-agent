@@ -141,8 +141,11 @@ journalctl -u <botname>-discord-agent.service -f       # tail logs
 
 If you set up by hand, the template at
 [`../agent-template/discord-agent.service`](../agent-template/discord-agent.service)
-uses `$USER`, `$AGENT_HOME`, `$SOURCE_DIR` placeholders — fill those in,
-then run the same `cp` / `daemon-reload` / `enable --now` sequence above.
+uses `{{BOT_NAME}}`, `{{USER}}`, `{{AGENT_HOME}}`, `{{SOURCE_DIR}}`, and
+`{{BUN_PATH}}` placeholders — fill those in (the three path placeholders
+take absolute paths), then run the same `cp` / `daemon-reload` /
+`enable --now` sequence above. The wizard reads this same template and
+substitutes the placeholders for you.
 
 Three things in the template that matter for self-restarting agents:
 

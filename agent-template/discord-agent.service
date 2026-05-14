@@ -1,33 +1,39 @@
-# Example systemd service for discord-agent.
+# Template systemd unit for discord-agent. `bun run setup` substitutes the
+# placeholders automatically; for the by-hand path see docs/manual-setup.md.
 #
-# Copy to /etc/systemd/system/<your-bot-name>.service, replace the
-# `$USER`, `$AGENT_HOME`, `$SOURCE_DIR` placeholders for your environment,
-# then:
+# Placeholders (every doubled-brace marker below — fill in or let setup do it):
+#   BOT_NAME    — friendly name shown in `systemctl status`
+#   USER        — unix user the bot runs as
+#   AGENT_HOME  — absolute path to the agent home directory
+#   SOURCE_DIR  — absolute path to the discord-agent checkout
+#   BUN_PATH    — absolute path to the bun binary (`which bun`)
 #
+# After substitution:
+#   sudo cp <agent-home>/<bot>-discord-agent.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now <your-bot-name>
-#   journalctl -u <your-bot-name> -f
+#   sudo systemctl enable --now <bot>-discord-agent.service
 #
-# `StartLimitIntervalSec=0` disables systemd's restart rate limit. With the
-# default (5 restarts in 10s) systemd marks the service failed and refuses
-# to bring it back — a real foot-gun if the agent ever self-restarts in
-# quick succession (e.g., a tight self-edit loop). Disable it.
+# `StartLimitIntervalSec=0` disables systemd's restart rate limit. With
+# the default (5 restarts in 10s) systemd marks the service failed and
+# refuses to bring it back — a foot-gun if the agent self-restarts in
+# quick succession (e.g., a tight self-edit loop).
 #
 # `Restart=always` restarts on any exit including clean `process.exit(0)`,
 # which is what the agent calls when self-restarting.
 
 [Unit]
-Description=discord-agent
+Description=discord-agent ({{BOT_NAME}})
+Documentation=https://github.com/frolic/discord-agent
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=$USER
-WorkingDirectory=/home/$USER/$AGENT_HOME
-EnvironmentFile=/home/$USER/$AGENT_HOME/.env
-ExecStart=/home/$USER/.bun/bin/bun /home/$USER/$SOURCE_DIR/src/bin/agent.ts
+User={{USER}}
+WorkingDirectory={{AGENT_HOME}}
+EnvironmentFile={{AGENT_HOME}}/.env
+ExecStart={{BUN_PATH}} {{SOURCE_DIR}}/src/bin/agent.ts
 Restart=always
 RestartSec=2
 StandardOutput=journal
@@ -39,7 +45,7 @@ ProtectSystem=strict
 ProtectHome=read-only
 # Two write paths: agent home (sessions, workspaces) AND source repo (so
 # the agent can edit its own framework code via bash/edit/write).
-ReadWritePaths=/home/$USER/$AGENT_HOME /home/$USER/$SOURCE_DIR
+ReadWritePaths={{AGENT_HOME}} {{SOURCE_DIR}}
 PrivateTmp=true
 
 [Install]
