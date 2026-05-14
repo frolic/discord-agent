@@ -47,8 +47,18 @@ bun ~/discord-agent/src/bin/agent.ts
 You should see `discord-agent online as YourBotName#1234`. Send any
 message in any channel or thread the bot can see — it'll reply.
 
-For long-term operation, see [operating.md](operating.md). The example
-agent home ships a systemd unit at
-[`../agent-template/discord-agent.service`](../agent-template/discord-agent.service)
-that you can copy and edit by hand (the wizard generates a pre-filled
-version automatically).
+For long-term operation, see [operating.md](operating.md). The template
+at [`../agent-template/discord-agent.service`](../agent-template/discord-agent.service)
+has five `{{X}}` placeholders to fill in:
+
+| Placeholder | Value |
+|---|---|
+| `{{BOT_NAME}}` | friendly name shown in `systemctl status` (e.g. `my-bot`) |
+| `{{USER}}` | unix user the bot runs as (e.g. `$(whoami)`) |
+| `{{AGENT_HOME}}` | absolute path to the agent home (e.g. `/home/me/agents/my-bot`) |
+| `{{SOURCE_DIR}}` | absolute path to this checkout (e.g. `/home/me/discord-agent`) |
+| `{{BUN_PATH}}` | absolute path to bun (`which bun`) |
+
+Replace each, then follow the install steps in
+[operating.md](operating.md#running-long-term-with-systemd). The wizard
+reads this same template and does the substitution for you.
