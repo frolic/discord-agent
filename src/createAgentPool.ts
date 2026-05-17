@@ -22,7 +22,7 @@
  * text deltas into the sender and surfaces errors that fall outside the
  * normal tool path.
  */
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { Client, Message } from "discord.js";
 import {
@@ -374,9 +374,52 @@ export function createAgentPool(args: {
     entries.delete(channelId);
     tracker.clearChannel(channelId);
     const sessionPath = sessionPathFor(channelId);
-    await rm(sessionPath, { force: true }).catch((error) =>
-      console.error(`[pool] failed to remove ${sessionPath}:`, error),
-    );
+    // Move the session JSONL to sessions-archive/ instead of deleting it —
+    // keeps prior conversations available for debugging (a `!clear` is often
+    // the moment you most want to look back at what went wrong). The next
+    // `prompt` on this channel creates a fresh sessions/<channelId>.jsonl;
+    // the archive filename (channelId-prefixed, sortable timestamp) makes
+    // `ls sessions-archive/<channelId>-*.jsonl` the operator-facing index.
+    const archivePath = await archiveSession(sessionPath, channelId);
+    if (archivePath) {
+      console.log(`[pool] archived session for ${channelId} → ${archivePath}`);
+    }
+  }
+
+  /**
+   * Move a session JSONL to the archive directory. Returns the archive path on
+   * success, `null` if the source didn't exist (no session yet — no-op, no
+   * error). Other I/O failures are logged and swallowed so a clear doesn't
+   * leave the channel in a half-cleared state — the entry is already evicted
+   * from the in-memory pool, and the file will just sit at the original path
+   * until a follow-up clear or manual cleanup.
+   */
+  async function archiveSession(sessionPath: string, channelId: string): Promise<string | null> {
+    const archiveDir = resolve(dirname(sessionPath), "..", "sessions-archive");
+    // YYYYMMDD-HHMMSS, UTC. Sortable, no colons (Windows-safe), no dots in
+    // the timestamp portion (avoids ambiguity with the .jsonl extension).
+    const now = new Date();
+    const stamp = [
+      now.getUTCFullYear(),
+      String(now.getUTCMonth() + 1).padStart(2, "0"),
+      String(now.getUTCDate()).padStart(2, "0"),
+      "-",
+      String(now.getUTCHours()).padStart(2, "0"),
+      String(now.getUTCMinutes()).padStart(2, "0"),
+      String(now.getUTCSeconds()).padStart(2, "0"),
+    ].join("");
+    const archivePath = resolve(archiveDir, `${channelId}-${stamp}.jsonl`);
+    try {
+      await mkdir(archiveDir, { recursive: true });
+      await rename(sessionPath, archivePath);
+      return archivePath;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      console.error(`[pool] failed to archive ${sessionPath} → ${archivePath}:`, error);
+      return null;
+    }
   }
 
   function hasActive(channelId: string): boolean {

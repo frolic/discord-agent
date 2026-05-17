@@ -8,6 +8,7 @@ auth.json
 
 # Per-channel state (created on first contact with each channel)
 sessions/
+sessions-archive/
 workspaces/
 
 # Harness state

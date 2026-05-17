@@ -16,8 +16,10 @@ allowlists, or role checks instead; the place to extend is the
   Older messages get summarized into a single compaction entry, freeing
   context budget. Bot reacts 🗜️. Compaction also runs automatically at
   pi's threshold; this command just triggers it on demand.
-- `!clear` — abort, drop the warm cache entry, delete this channel's
-  `session.jsonl`. Next message starts a fresh conversation. Bot reacts 🗑️.
+- `!clear` — abort, drop the warm cache entry, and archive this channel's
+  `session.jsonl` to `sessions-archive/<channelId>-<YYYYMMDD-HHMMSS>.jsonl`
+  (UTC timestamp = clear time). Next message starts a fresh conversation;
+  prior conversations stay on disk for debugging. Bot reacts 🗑️.
 - `!restart` — exit the bot process; supervisor (systemd, Docker) restarts
   with current source. Bot reacts 🔄. Without a supervisor, the bot won't
   come back. Use when state is stuck or after pulling fresh code.
