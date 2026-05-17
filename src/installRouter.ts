@@ -6,11 +6,13 @@
  * channel).
  *
  * Two event sources:
- * - `messageCreate` — fresh user messages. May be commands (`!stop`,
- *   `!compact`, `!clear`, `!restart`) which the harness handles directly
- *   without involving the agent. The catchup cursor (`lastSeenMessageId`)
- *   advances on every received message so post-restart recovery has a
- *   usable `history(after=…)` hint.
+ * - `messageCreate` — fresh user messages. May be `!`-prefixed commands
+ *   (`!stop`, `!compact`, `!clear`, `!restart`) which the harness handles
+ *   directly without involving the agent — dispatched via
+ *   `commandRegistry` in `./commands/registry.ts`; add or change commands
+ *   there, not here. The catchup cursor (`lastSeenMessageId`) advances on
+ *   every received message so post-restart recovery has a usable
+ *   `history(after=…)` hint.
  * - `messageUpdate` — user edits, treated as steering. The edited
  *   message flows through `pool.handle`, which lands it as a steer if
  *   the agent is mid-turn or as a fresh wake if idle (the formatted
@@ -24,8 +26,7 @@
 import type { Client, Message, PartialMessage } from "discord.js";
 import type { AgentPool } from "./createAgentPool.ts";
 import type { ActiveTracker } from "./active/createActiveTracker.ts";
-import { harnessContextClearedPrompt } from "./agent/prompts.ts";
-import { postDebugLine } from "./io/postDebugLine.ts";
+import { commandRegistry } from "./commands/registry.ts";
 
 export function installRouter(args: {
   client: Client;
@@ -50,7 +51,7 @@ export function installRouter(args: {
     const text = message.content.replace(/<@!?\d+>/g, "").trim().toLowerCase();
 
     if (text.startsWith("!")) {
-      await handleCommand({ command: text, message, channelId, pool, tracker });
+      await dispatchCommand({ command: text, message, channelId, pool, tracker });
       return;
     }
 
@@ -89,7 +90,13 @@ async function hydrateMessage(message: Message | PartialMessage): Promise<Messag
   });
 }
 
-async function handleCommand(args: {
+/**
+ * Find the handler whose prefix the command starts with and invoke it.
+ * Unknown commands react `❓`. Insertion order in `commandRegistry`
+ * determines first-match wins; the current set has no overlapping
+ * prefixes so ordering is informational.
+ */
+async function dispatchCommand(args: {
   command: string;
   message: Message;
   channelId: string;
@@ -100,41 +107,11 @@ async function handleCommand(args: {
   const react = (emoji: string): Promise<unknown> =>
     message.react(emoji).catch((error) => console.error(`[router] react ${emoji} failed:`, error));
 
-  if (command.startsWith("!stop")) {
-    pool.abort(channelId);
-    await react("🛑");
-    return;
-  }
-  if (command.startsWith("!compact")) {
-    const started = pool.compact(channelId);
-    await react(started ? "🗜️" : "⏳");
-    return;
-  }
-  if (command.startsWith("!clear")) {
-    await pool.clear(channelId);
-    await react("🗑️");
-    // Wake the fresh session with a harness notice so the agent knows its
-    // history was wiped — it can call the `history` tool if it wants context.
-    pool.wakeUp(channelId, harnessContextClearedPrompt).catch((error) =>
-      console.error(`[router] post-clear wakeUp failed for ${channelId}:`, error),
-    );
-    return;
-  }
-  if (command.startsWith("!restart")) {
-    await react("🔄");
-    await postDebugLine({
-      client: message.client,
-      content: "-# 🔴 offline — !restart",
-    }).catch(() => {});
-    // Mark cameFromRestart so recoverActive injects the "you just
-    // restarted" harness prompt on respawn — agent posts its own
-    // back-online reply instead of staying silent.
-    tracker.markRestart(channelId);
-    // Brief delay so the reaction lands before we exit. Supervisor
-    // (systemd, Docker, wrapper script) respawns. Without a supervisor,
-    // the bot will not come back.
-    setTimeout(() => process.exit(0), 500);
-    return;
+  for (const [prefix, handler] of Object.entries(commandRegistry)) {
+    if (command.startsWith(prefix)) {
+      await handler({ command, message, channelId, pool, tracker, react });
+      return;
+    }
   }
   await react("❓");
 }
