@@ -22,10 +22,7 @@
  * text deltas into the sender and surfaces errors that fall outside the
  * normal tool path.
  */
-import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, rename, stat, unlink } from "node:fs/promises";
-import { pipeline } from "node:stream/promises";
-import { createGzip } from "node:zlib";
+import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { Client, Message } from "discord.js";
 import {
@@ -131,9 +128,12 @@ function buildTools(args: {
 }
 
 export interface AgentPool {
+  /**
+   * Receive a real Discord user message: format it, route to the channel's
+   * session, run a turn. Streaming output is wired into the entry's sender;
+   * tool calls land on the LLM normally.
+   */
   handle(channelId: string, message: Message): Promise<void>;
-  abort(channelId: string): void;
-  clear(channelId: string): Promise<void>;
   /**
    * Inject a synthetic user-role prompt into the channel's session and run a
    * turn. Used by every "the agent didn't get here through a Discord message"
@@ -142,16 +142,31 @@ export interface AgentPool {
    * `handle` minus the discord.js Message → formatted-line step.
    */
   wakeUp(channelId: string, prompt: string): Promise<void>;
-  /**
-   * Trigger pi's context compaction on this channel's session. Returns
-   * `true` if a new compaction started, `false` if skipped (no warm
-   * session, or one is already in flight). Concurrent calls are skipped
-   * because pi's `AgentSession.compact()` doesn't guard against re-entry
-   * — see upstream issue earendil-works/pi#4203.
-   */
-  compact(channelId: string): boolean;
   /** True iff a pool entry exists for this channel — used to gate edit-as-steering on live conversations. */
   hasActive(channelId: string): boolean;
+  /**
+   * Return the warm `AgentSession` for this channel, or `undefined` if none.
+   * Exposed so command handlers (`!stop`, `!compact`) can act on the session
+   * directly without wrapping each operation in a pool method. The pool
+   * itself doesn't expose abort/compact — those are caller-orchestrated.
+   */
+  session(channelId: string): AgentSession | undefined;
+  /**
+   * Remove the warm entry for this channel from the in-memory pool. Used by
+   * `!clear` after archiving the on-disk session, so the next message
+   * acquires a fresh entry. Does not touch the on-disk session file — that's
+   * the caller's job (`archiveSession` or equivalent).
+   */
+  dropEntry(channelId: string): void;
+}
+
+/**
+ * Absolute path to the session JSONL for a given Discord channel/thread.
+ * Exported so callers outside the pool (e.g. `!clear` archive logic) can
+ * compute the path without reaching into pool internals.
+ */
+export function sessionPathFor(channelId: string): string {
+  return resolve(config.agentDir, "sessions", `${channelId}.jsonl`);
 }
 
 export function createAgentPool(args: {
@@ -187,10 +202,6 @@ export function createAgentPool(args: {
       if (entry.session.agent.state.isStreaming) continue;
       entries.delete(id);
     }
-  }
-
-  function sessionPathFor(channelId: string): string {
-    return resolve(config.agentDir, "sessions", `${channelId}.jsonl`);
   }
 
   /**
@@ -337,27 +348,12 @@ export function createAgentPool(args: {
     }
   }
 
-  function abort(channelId: string): void {
-    entries.get(channelId)?.session.abort();
+  function session(channelId: string): AgentSession | undefined {
+    return entries.get(channelId)?.session;
   }
 
-  function compact(channelId: string): boolean {
-    // No-op when the channel has no warm session — there's nothing to
-    // compact, and acquiring an entry just to compact it would be
-    // pointless.
-    const entry = entries.get(channelId);
-    if (!entry) return false;
-    // Concurrent compactions on the same session orphan pi's
-    // `_compactionAbortController` and run two LLM summaries in parallel
-    // (earendil-works/pi#4203). Skip if one is already in flight.
-    if (entry.session.isCompacting) return false;
-    // Pi can still throw "Already compacted" if the last session entry
-    // is already a compaction — fire-and-forget but catch to avoid an
-    // unhandled rejection.
-    entry.session.compact().catch((error) => {
-      console.error(`[pool] compact ${channelId} failed:`, error);
-    });
-    return true;
+  function dropEntry(channelId: string): void {
+    entries.delete(channelId);
   }
 
   async function wakeUp(channelId: string, prompt: string): Promise<void> {
@@ -372,93 +368,15 @@ export function createAgentPool(args: {
     }
   }
 
-  async function clear(channelId: string): Promise<void> {
-    abort(channelId);
-    entries.delete(channelId);
-    tracker.clearChannel(channelId);
-    const sessionPath = sessionPathFor(channelId);
-    // Move the session JSONL to sessions-archive/ instead of deleting it —
-    // keeps prior conversations available for debugging (a `!clear` is often
-    // the moment you most want to look back at what went wrong). The next
-    // `prompt` on this channel creates a fresh sessions/<channelId>.jsonl;
-    // the archive filename (channelId-prefixed, sortable timestamp) makes
-    // `ls sessions-archive/<channelId>-*.jsonl` the operator-facing index.
-    const archivePath = await archiveSession(sessionPath, channelId);
-    if (archivePath) {
-      console.log(`[pool] archived session for ${channelId} → ${archivePath}`);
-    }
-  }
-
-  /**
-   * Gzip a session JSONL into the archive directory. Returns the archive
-   * path on success, `null` if the source didn't exist (no session yet —
-   * no-op, not an error). Any other I/O failure bubbles up: better to
-   * surface a loud failure than to leave the channel half-cleared (in-memory
-   * evicted but the on-disk session intact, which would resume on the next
-   * message and silently undo the `!clear`).
-   *
-   * Two reasons for the `.jsonl.gz` extension (not plain `.jsonl`):
-   *   1. Disk: sessions can be MB-sized; JSONL gzips ~8-15× (repeated keys
-   *      and whitespace), so a long-lived agent home doesn't accumulate
-   *      hundreds of MB of archived chat history.
-   *   2. Hides from pi enumeration: pi's session walkers filter on
-   *      `.endsWith(".jsonl")`, so archives won't show up as a pseudo
-   *      "archive" agent in pi-TUI alongside live sessions.
-   *
-   * Replay: `gunzip -c <path> > /tmp/replay.jsonl && pi --session /tmp/replay.jsonl`
-   * (pi doesn't read `.gz` directly).
-   */
-  async function archiveSession(sessionPath: string, channelId: string): Promise<string | null> {
-    // Nest archives under sessions/ so backups / sync tools that already
-    // cover sessions/ pick them up automatically, and the operator's
-    // "where do conversations live" mental model stays single-rooted.
-    const archiveDir = resolve(dirname(sessionPath), "archive");
-    // YYYYMMDD-HHMMSS, UTC. Sortable, no colons (Windows-safe).
-    const now = new Date();
-    const stamp = [
-      now.getUTCFullYear(),
-      String(now.getUTCMonth() + 1).padStart(2, "0"),
-      String(now.getUTCDate()).padStart(2, "0"),
-      "-",
-      String(now.getUTCHours()).padStart(2, "0"),
-      String(now.getUTCMinutes()).padStart(2, "0"),
-      String(now.getUTCSeconds()).padStart(2, "0"),
-    ].join("");
-    const archivePath = resolve(archiveDir, `${channelId}-${stamp}.jsonl.gz`);
-    // Stat-then-stream: race-y in theory (file could vanish between calls)
-    // but on a single-threaded harness the source can't disappear after the
-    // stat without somebody else editing the agent home. The pipeline below
-    // would surface that as a stream error anyway.
-    try {
-      await stat(sessionPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        // No session to clear — valid no-op (matches the prior `rm { force: true }`).
-        return null;
-      }
-      throw error;
-    }
-    await mkdir(archiveDir, { recursive: true });
-    // Write to <archive>.partial, then rename to <archive>, then unlink the
-    // source. Atomic publish at the final path — readers never see a
-    // half-written `.gz`. If any step throws, bubble up; operator deals.
-    const partialPath = `${archivePath}.partial`;
-    await pipeline(createReadStream(sessionPath), createGzip(), createWriteStream(partialPath));
-    await rename(partialPath, archivePath);
-    await unlink(sessionPath);
-    return archivePath;
-  }
-
   function hasActive(channelId: string): boolean {
     return entries.has(channelId);
   }
 
   return {
     handle,
-    abort,
-    clear,
     wakeUp,
-    compact,
     hasActive,
+    session,
+    dropEntry,
   };
 }
