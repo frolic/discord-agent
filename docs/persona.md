@@ -116,3 +116,40 @@ context (that goes in `AGENTS.md`).
 
 For more advanced setups (extra skill paths, npm-installable skill
 packages, prompt templates, themes), see [pi's settings docs](https://github.com/earendil-works/pi/blob/v0.74.0/packages/coding-agent/docs/settings.md#resources).
+
+## Writing multi-step prompts: order them
+
+When a prompt asks the model to do several things, **order the steps
+procedurally** ("do X **before** Y") rather than compositionally ("fold
+X into Y"). LLMs follow sequenced instructions reliably; compositional
+ones get treated as stylistic preferences that compete with other style
+rules and often lose.
+
+This applies to anything prompt-shaped — SYSTEM.md rules, harness
+notices (in [`../src/agent/prompts.ts`](../src/agent/prompts.ts)), tool
+descriptions, skill instructions, even memory entries that the model
+reads each turn.
+
+Concrete example, from the harness's catchup suffix that wakes a
+session after `!restart`:
+
+**Before** (compositional — produced two-message responses):
+
+> "Call `history(after=...)` if you want to read them; otherwise skip."
+
+**After** (procedural — produces one):
+
+> "If you want to read them, call `history(after=...)` **BEFORE writing
+> any response text**, then fold what you found into your single reply."
+
+The before-wording asked the model to make a decision and (implicitly)
+not interleave it with text output. The model interpreted the absence of
+ordering as freedom: post a quick acknowledgment ("Back."), then call
+the tool, then post the result ("Nothing new in the channel...") — two
+visible messages instead of one. The after-wording pins the sequence:
+tool call happens first, response text comes after, one message.
+
+If you find yourself writing **"and also"** or **"fold X into Y"** in a
+prompt, ask whether an explicit **"X before Y"** would read sharper.
+Reserve compositional framing for genuinely simultaneous instructions
+("be casual AND avoid emoji") — anything sequential should be ordered.

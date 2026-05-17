@@ -1,6 +1,12 @@
 /**
  * Standalone prompt strings used by the harness's resource-loader wiring.
  * Lifted out of the wiring files so the prose doesn't drown the logic.
+ *
+ * Convention: multi-step prompts use **ordered procedural framing** —
+ * "do X BEFORE Y" rather than "fold X into Y" — because LLMs follow
+ * sequenced instructions more reliably than compositional ones. See
+ * `docs/persona.md` ("Writing multi-step prompts: order them") for the
+ * worked example that drove the convention.
  */
 
 export const harnessRules = `# Discord delivery (harness layer)
