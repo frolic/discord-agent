@@ -16,10 +16,11 @@ allowlists, or role checks instead; the place to extend is the
   Older messages get summarized into a single compaction entry, freeing
   context budget. Bot reacts 🗜️. Compaction also runs automatically at
   pi's threshold; this command just triggers it on demand.
-- `!clear` — abort, drop the warm cache entry, and archive this channel's
-  `session.jsonl` to `sessions/archive/<channelId>-<YYYYMMDD-HHMMSS>.jsonl`
+- `!clear` — abort, drop the warm cache entry, and gzip this channel's
+  `session.jsonl` into `sessions/archive/<channelId>-<YYYYMMDD-HHMMSS>.jsonl.gz`
   (UTC timestamp = clear time). Next message starts a fresh conversation;
-  prior conversations stay on disk for debugging. Bot reacts 🗑️.
+  prior conversations stay on disk compressed for debugging — read with
+  `gunzip -c <path>`. Bot reacts 🗑️.
 - `!restart` — exit the bot process; supervisor (systemd, Docker) restarts
   with current source. Bot reacts 🔄. Without a supervisor, the bot won't
   come back. Use when state is stuck or after pulling fresh code.
