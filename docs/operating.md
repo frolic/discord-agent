@@ -37,10 +37,11 @@ The agent home is the cwd you launch the bot from (or whatever you point
   discord-agent.service               # systemd template
 
   # runtime state (gitignored)
-  auth.json                           # pi's credential store (created by pi if a user runs `/login`)
-  sessions/<channelId>.jsonl          # one file per Discord channel/thread
-  workspaces/<channelId>/             # agent's cwd for that channel
-  active-sessions.json                # per-channel work-state for restart recovery
+  auth.json                                              # pi's credential store (created by pi if a user runs `/login`)
+  sessions/<channelId>.jsonl                              # one file per Discord channel/thread
+  sessions/archive/<channelId>-<YYYYMMDD-HHMMSS>.jsonl.gz # gzipped archive of past sessions, created by `!clear` (UTC timestamp = clear time)
+  workspaces/<channelId>/                                # agent's cwd for that channel
+  active-sessions.json                                   # per-channel work-state for restart recovery
 ```
 
 Threads share the structure with channels — Discord treats a thread as a
@@ -49,7 +50,14 @@ distinct channel ID, so `sessions/<threadId>.jsonl` and
 
 The `session.jsonl` files are pi's native format. You can resume any
 conversation from your terminal with `pi --session <path>`, useful for
-debugging or continuing a chat outside Discord.
+debugging or continuing a chat outside Discord. `!clear` gzips the
+current session JSONL into `sessions/archive/<channelId>-<timestamp>.jsonl.gz`
+instead of deleting it — `ls sessions/archive/<channelId>-*.jsonl.gz`
+indexes prior conversations for the same channel, oldest to newest.
+Inspect with `gunzip -c <path>` (or `zless`); to replay one in a
+terminal, `gunzip -c <path> > /tmp/replay.jsonl && pi --session /tmp/replay.jsonl`
+(pi doesn't read `.gz` directly). The `.gz` extension also keeps archives
+out of pi's session-enumeration walkers, which scan for `.jsonl`.
 
 To run multiple agents from the same framework, repeat with a separate
 home dir per bot.
