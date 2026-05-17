@@ -395,7 +395,10 @@ export function createAgentPool(args: {
    * until a follow-up clear or manual cleanup.
    */
   async function archiveSession(sessionPath: string, channelId: string): Promise<string | null> {
-    const archiveDir = resolve(dirname(sessionPath), "..", "sessions-archive");
+    // Nest archives under sessions/ so backups / sync tools that already cover
+    // sessions/ pick them up automatically, and the operator's "where do
+    // conversations live" mental model stays single-rooted.
+    const archiveDir = resolve(dirname(sessionPath), "archive");
     // YYYYMMDD-HHMMSS, UTC. Sortable, no colons (Windows-safe), no dots in
     // the timestamp portion (avoids ambiguity with the .jsonl extension).
     const now = new Date();

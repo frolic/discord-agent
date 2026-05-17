@@ -17,7 +17,7 @@ allowlists, or role checks instead; the place to extend is the
   context budget. Bot reacts 🗜️. Compaction also runs automatically at
   pi's threshold; this command just triggers it on demand.
 - `!clear` — abort, drop the warm cache entry, and archive this channel's
-  `session.jsonl` to `sessions-archive/<channelId>-<YYYYMMDD-HHMMSS>.jsonl`
+  `session.jsonl` to `sessions/archive/<channelId>-<YYYYMMDD-HHMMSS>.jsonl`
   (UTC timestamp = clear time). Next message starts a fresh conversation;
   prior conversations stay on disk for debugging. Bot reacts 🗑️.
 - `!restart` — exit the bot process; supervisor (systemd, Docker) restarts
