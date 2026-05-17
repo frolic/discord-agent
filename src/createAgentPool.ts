@@ -387,17 +387,17 @@ export function createAgentPool(args: {
   }
 
   /**
-   * Move a session JSONL to the archive directory. Returns the archive path on
-   * success, `null` if the source didn't exist (no session yet — no-op, no
-   * error). Other I/O failures are logged and swallowed so a clear doesn't
-   * leave the channel in a half-cleared state — the entry is already evicted
-   * from the in-memory pool, and the file will just sit at the original path
-   * until a follow-up clear or manual cleanup.
+   * Move a session JSONL to the archive directory. Returns the archive path
+   * on success, `null` if the source didn't exist (no session yet — no-op,
+   * not an error). Any other I/O failure bubbles up: better to surface a
+   * loud failure than to leave the channel half-cleared (in-memory evicted
+   * but the on-disk session intact, which would resume on the next message
+   * and silently undo the `!clear`).
    */
   async function archiveSession(sessionPath: string, channelId: string): Promise<string | null> {
-    // Nest archives under sessions/ so backups / sync tools that already cover
-    // sessions/ pick them up automatically, and the operator's "where do
-    // conversations live" mental model stays single-rooted.
+    // Nest archives under sessions/ so backups / sync tools that already
+    // cover sessions/ pick them up automatically, and the operator's
+    // "where do conversations live" mental model stays single-rooted.
     const archiveDir = resolve(dirname(sessionPath), "archive");
     // YYYYMMDD-HHMMSS, UTC. Sortable, no colons (Windows-safe), no dots in
     // the timestamp portion (avoids ambiguity with the .jsonl extension).
@@ -412,17 +412,18 @@ export function createAgentPool(args: {
       String(now.getUTCSeconds()).padStart(2, "0"),
     ].join("");
     const archivePath = resolve(archiveDir, `${channelId}-${stamp}.jsonl`);
+    await mkdir(archiveDir, { recursive: true });
     try {
-      await mkdir(archiveDir, { recursive: true });
       await rename(sessionPath, archivePath);
-      return archivePath;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        // Source didn't exist — clearing a channel with no prior session is
+        // a valid no-op (matches the prior `rm { force: true }` behavior).
         return null;
       }
-      console.error(`[pool] failed to archive ${sessionPath} → ${archivePath}:`, error);
-      return null;
+      throw error;
     }
+    return archivePath;
   }
 
   function hasActive(channelId: string): boolean {
