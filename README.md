@@ -52,8 +52,10 @@ optional pre-filled systemd unit. The run command prints at the end.
 >   wizard auto-detects this and writes `DISCORD_API_URL` accordingly.
 > - **Pre-filled systemd unit** — generated with absolute paths for
 >   this host, including `StartLimitIntervalSec=0` (a foot-gun if you
->   miss it — see [docs/operating.md](docs/operating.md)) and
->   `ReadWritePaths` covering both the agent home and the source repo.
+>   miss it — see [docs/operating.md](docs/operating.md)). Hardening
+>   beyond `NoNewPrivileges` is off by default since the namespace
+>   directives break on some hosts; opt back in per
+>   [docs/operating.md#optional-stricter-hardening](docs/operating.md).
 >
 > Ask the user for the Discord bot token and the LLM provider + key
 > upfront if you want; then start `bun run setup` and feed those answers
