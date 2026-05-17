@@ -169,6 +169,28 @@ export function sessionPathFor(channelId: string): string {
   return resolve(config.agentDir, "sessions", `${channelId}.jsonl`);
 }
 
+/**
+ * Resolve immediately if the session isn't compacting; otherwise wait for
+ * the next `compaction_end` event. Pi's auto-compaction runs inline in
+ * `_processAgentEvent`'s `agent_end` handler before `finishRun()` resolves,
+ * so the session's internal `activeRun` is still set during the
+ * summarization window. Calling `prompt(...)` then throws
+ * "Agent is already processing", which used to surface as a channel-
+ * visible error if the user typed during compaction (#26). Gating
+ * `prompt(...)` on this helper closes the race.
+ */
+function whenNotCompacting(session: AgentSession): Promise<void> {
+  if (!session.isCompacting) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "compaction_end") {
+        unsubscribe();
+        resolve();
+      }
+    });
+  });
+}
+
 export function createAgentPool(args: {
   client: Client;
   tracker: ActiveTracker;
@@ -303,6 +325,11 @@ export function createAgentPool(args: {
   async function handle(channelId: string, message: Message): Promise<void> {
     const entry = await acquirePoolEntry(channelId);
     entry.lastActive = Date.now();
+    // Wait out any in-flight compaction before calling `session.prompt(...)`.
+    // Pi's `_processAgentEvent` runs compaction inline in the `agent_end`
+    // handler before `finishRun()` resolves, so `activeRun` is still set
+    // and `prompt()` would throw "Agent is already processing". See #26.
+    await whenNotCompacting(entry.session);
     // Point subsequent debug-channel log entries at this message — the
     // logger uses it as the link target so each tool entry is clickable
     // back to the user message that triggered the run.
@@ -361,6 +388,8 @@ export function createAgentPool(args: {
     entry.lastActive = Date.now();
     // Synthetic wake — no real Discord message to thread under.
     entry.replyTarget = undefined;
+    // Same compaction guard as `handle` — see #26.
+    await whenNotCompacting(entry.session);
     try {
       await entry.session.prompt(prompt);
     } catch (error) {
