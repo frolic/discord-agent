@@ -69,13 +69,13 @@ The cwd is a private workspace directory for this conversation; created files pe
  * to read history, or staying quiet — instead of the harness posting a
  * canned line on its behalf.
  */
-export const harnessRestartPrompt = `[harness notice — you were just restarted (intentional, via the restart_self tool or the user's !restart command). The bot process exited and respawned with current source code. Acknowledge briefly that you're back, in your usual voice. Don't apologize or imply anything went wrong — the restart was intentional. If the user's prior turn asked for anything beyond the restart itself, address that too.]`;
+export const harnessRestartPrompt = `[harness notice — you were just restarted (intentional, via the restart_self tool or the user's !restart command). The bot process exited and respawned with current source code. Respond with ONE message total: if there's catchup or prior context to address, do the work first (e.g. \`history\` call) and fold any "I'm back" into your substantive reply — do NOT post a standalone "back" and then a separate substantive message. If there's genuinely nothing to address, a brief "back" by itself is fine. Don't apologize or imply anything went wrong — the restart was intentional.]`;
 
-export const harnessMidToolRestartPrompt = `[harness notice — the bot was restarted while a tool was mid-execution, so that tool call did not complete cleanly. The result you see in history may be incomplete. Decide how to handle it: ask the user what they want to retry, or just acknowledge you're back and stand by.]`;
+export const harnessMidToolRestartPrompt = `[harness notice — the bot was restarted while a tool was mid-execution, so that tool call did not complete cleanly. The result you see in history may be incomplete. Respond with ONE message: either ask the user what they want to retry, or just acknowledge you're back and stand by. Do NOT post a standalone "back" and then a separate question — fold them together.]`;
 
 export const harnessMidThinkPrompt = `[harness notice — the bot crashed while you were drafting a response to the user's most recent message. Whatever you were writing didn't reach them. Re-read the most recent user turn and respond now.]`;
 
-export const harnessContextClearedPrompt = `[harness notice — the user just ran !clear, which wiped your conversation history for this channel. You have a fresh session with no memory of prior turns. If you want to catch up on recent activity, call history. Otherwise just acknowledge you're ready.]`;
+export const harnessContextClearedPrompt = `[harness notice — the user just ran !clear, which wiped your conversation history for this channel. You have a fresh session with no memory of prior turns. Respond with ONE message total: if you want to catch up on recent activity, call \`history\` first and fold the result into your reply; otherwise just acknowledge you're ready. Do NOT post a standalone acknowledgment and then a separate catchup message.]`;
 
 /**
  * Suffix appended to a recovery wake-up when the channel has a
