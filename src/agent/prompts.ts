@@ -87,5 +87,5 @@ export const harnessContextClearedPrompt = `[harness notice — the user just ra
  * anyway, which it tends to.
  */
 export function harnessCatchupSuffix(lastSeenMessageId: string): string {
-  return `\n\n[catchup — messages may have arrived in this channel since you last responded. Call \`history(after=${lastSeenMessageId})\` if you want to read them; otherwise skip.]`;
+  return `\n\n[catchup — messages may have arrived in this channel since you last responded. If you want to read them, call \`history(after=${lastSeenMessageId})\` BEFORE writing any response text, then fold what you found into your single reply. If you'd rather skip the check, just respond once with what you have. Either way: do not post a status text first and then a separate reply after the tool call.]`;
 }
