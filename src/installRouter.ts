@@ -38,7 +38,7 @@ export function installRouter(args: {
   client.on("messageCreate", async (message) => {
     if (!client.user) return;
     // Skip our own messages (bot talking to itself). Let other bots through
-    // so scheduler triggers reach the agent via wake messages.
+    // so scheduler triggers reach the agent.
     if (message.author.id === client.user.id) return;
     // Defensive: DM intents are off, but if a DM ever leaks through, ignore.
     if (!message.guildId) return;
@@ -65,7 +65,7 @@ export function installRouter(args: {
     if (!message) return;
     if (!client.user) return;
     // Skip edits from our own bot account. Other bot edits pass through
-    // (scheduler trigger edits, etc.).
+    // (scheduler triggers edited messages, etc.).
     if (message.author.id === client.user.id) return;
     if (!message.guildId) return;
     // Discord fires messageUpdate for non-content reasons (embed/link
