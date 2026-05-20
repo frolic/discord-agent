@@ -13,15 +13,21 @@
  *
  * Chunking rules, in priority order:
  *
- *   1. **Heading-led chunks**: when a heading-like block (a real ATX
- *      heading, or a `**Bold:**`-only-line pseudo-heading) appears,
- *      finalize the current chunk first so the heading leads its own
- *      Discord message. Models structure long replies by section.
+ *   1. **Size-driven packing**: keep adding top-level blocks to the
+ *      current chunk while they fit. The trigger for splitting is
+ *      *always* hardLimit overflow — never structure. Short replies
+ *      stay as one message regardless of how many headings they
+ *      contain; inline rendering of bold/heading already shows section
+ *      structure within a single message.
  *
- *   2. **Pack greedily within hardLimit**: keep adding blocks to the
- *      current chunk while they fit. As soon as the next block would
- *      push past hardLimit, finalize and start a new chunk with that
- *      block.
+ *   2. **Heading-keep on split**: when a block doesn't fit and we have
+ *      to start a new chunk, lift any trailing heading-like blocks off
+ *      the about-to-commit chunk and carry them into the next chunk
+ *      with the new block. A heading at the end of message N with its
+ *      body at the start of message N+1 reads worse than the heading
+ *      sitting with its body in message N+1. We stop lifting if doing
+ *      so would empty the current chunk, or if the carried heading +
+ *      new block would itself overflow.
  *
  *   3. **Block-too-big handling**: when one block alone exceeds
  *      hardLimit:
@@ -33,6 +39,13 @@
  *          fence closed and reopened on the same language.
  *        - **Paragraphs / lists / blockquotes** split at the latest
  *          word boundary in the rendered text.
+ *
+ * The chunk count is monotonic non-decreasing across re-flushes by
+ * construction: the only way to add a chunk is overflow on a block
+ * that wasn't there last flush. No proactive structural split mechanism
+ * exists, so transient mid-stream parse states (a `**Bold**` paragraph
+ * that hasn't completed its line yet) can't cause a chunk-count
+ * regression that would orphan a previously-posted Discord message.
  *
  * Inter-block separator handling: when consecutive blocks land in the
  * same chunk, we slice `prep.rendered` directly — that string already
@@ -59,21 +72,21 @@ export function chunkRendered(prep: PreparedDelivery, options: ChunkOptions): st
   if (prep.blocks.length === 0) return [];
 
   const chunks: string[] = [];
-  // We track the current chunk as a half-open run [runStart, runEnd) of
-  // rendered offsets. Slicing prep.rendered over this run gives us the
-  // chunk text — including the inter-block separators that
-  // `prepareForDelivery` already placed (`\n` for code-adjacent
-  // transitions, `\n\n` elsewhere). No need to re-pick separators here;
-  // we let the source of truth (the rendered string) speak for itself.
-  let runStart = -1;
-  let runEnd = -1;
+  // The current chunk is a contiguous range of block indices. Slicing
+  // prep.rendered from the first block's renderedStart to the last
+  // block's renderedEnd gives the chunk text — including the
+  // inter-block separators that prepareForDelivery already placed.
+  // Tracking as an index array (rather than offset pointers) makes
+  // "pop trailing headings" trivial.
+  let runIndices: number[] = [];
 
   function commitRun(): void {
-    if (runStart < 0) return;
-    const text = prep.rendered.slice(runStart, runEnd).replace(/[ \t\n]+$/, "");
+    if (runIndices.length === 0) return;
+    const first = prep.blocks[runIndices[0]!]!;
+    const last = prep.blocks[runIndices[runIndices.length - 1]!]!;
+    const text = prep.rendered.slice(first.renderedStart, last.renderedEnd).replace(/[ \t\n]+$/, "");
     if (text.length > 0) chunks.push(text);
-    runStart = -1;
-    runEnd = -1;
+    runIndices = [];
   }
 
   function commitString(s: string): void {
@@ -84,53 +97,57 @@ export function chunkRendered(prep: PreparedDelivery, options: ChunkOptions): st
   for (let i = 0; i < prep.blocks.length; i++) {
     const block = prep.blocks[i]!;
 
-    // Heading-led chunks: a heading-like block starts its own Discord
-    // message — but ONLY when there's at least one block after it.
-    //
-    // Mid-stream, a trailing `**Bold**` paragraph is suspicious: the
-    // model is often about to continue with " at `path` — more content"
-    // on the same line in the next delta, at which point the paragraph
-    // is no longer single-strong-child and no longer heading-like.
-    // Splitting at that transient state posts a Discord message
-    // containing just the bold heading, then on the next flush the
-    // re-chunker produces ONE chunk again — but messages.length is
-    // still 2, so the dispatcher edits messages[0] to the full content
-    // and leaves messages[1] orphaned in Discord with the stale
-    // "**Heading**" text. Skipping the split on the last block defers
-    // the decision until at least one following block has arrived,
-    // which is exactly when we know the heading is real and complete.
-    const isLastBlock = i === prep.blocks.length - 1;
-    if (runStart >= 0 && !isLastBlock && isHeadingLike(block.node)) {
-      commitRun();
-    }
-
     // What does extending the current run to include this block look like?
-    const candidateStart = runStart < 0 ? block.renderedStart : runStart;
+    const candidateStart =
+      runIndices.length === 0
+        ? block.renderedStart
+        : prep.blocks[runIndices[0]!]!.renderedStart;
     const candidateLen = block.renderedEnd - candidateStart;
 
     if (candidateLen <= hardLimit) {
-      runStart = candidateStart;
-      runEnd = block.renderedEnd;
+      runIndices.push(i);
       continue;
     }
 
-    // Doesn't fit. Finalize the run, then handle this block.
-    commitRun();
-
+    // Doesn't fit. If THIS block alone exceeds hardLimit, commit the
+    // current run and hand the block off to the oversized-block splitter
+    // (tables / code / word-boundary).
     const blockLen = block.renderedEnd - block.renderedStart;
-    if (blockLen <= hardLimit) {
-      runStart = block.renderedStart;
-      runEnd = block.renderedEnd;
+    if (blockLen > hardLimit) {
+      commitRun();
+      const blockText = prep.rendered.slice(block.renderedStart, block.renderedEnd);
+      const subChunks = splitOversizedBlock(block.node, blockText, hardLimit);
+      for (const sc of subChunks) commitString(sc);
       continue;
     }
 
-    // Block alone is too big. Split it across multiple chunks. The
-    // splitter helpers build their own strings (fences, header repeat,
-    // word-boundary cuts), so we commit each one as a finished string
-    // rather than as a slice of `prep.rendered`.
-    const blockText = prep.rendered.slice(block.renderedStart, block.renderedEnd);
-    const subChunks = splitOversizedBlock(block.node, blockText, hardLimit);
-    for (const sc of subChunks) commitString(sc);
+    // Block fits standalone but pushes the current run over hardLimit.
+    // We're about to split. Apply the heading-keep rule: lift any
+    // trailing heading-like blocks off the about-to-commit chunk and
+    // carry them into the next chunk with this block. A heading at the
+    // end of message N with its body starting message N+1 reads worse
+    // than the heading sitting with its body in N+1.
+    //
+    // Stop lifting if (a) doing so would empty the current chunk
+    // (better to ship a chunk-with-trailing-heading than no chunk at
+    // all, which would loop), or (b) the carried heading + new block
+    // would itself overflow (the section is fundamentally bigger than
+    // a Discord message; just split at the block boundary).
+    const carried: number[] = [];
+    while (runIndices.length > 1) {
+      const tailIdx = runIndices[runIndices.length - 1]!;
+      const tailBlock = prep.blocks[tailIdx]!;
+      if (!isHeadingLike(tailBlock.node)) break;
+      // Would popping this heading make the next chunk overflow?
+      // If yes, leave the heading in the current chunk.
+      const nextChunkSize = block.renderedEnd - tailBlock.renderedStart;
+      if (nextChunkSize > hardLimit) break;
+      runIndices.pop();
+      carried.unshift(tailIdx);
+    }
+
+    commitRun();
+    runIndices = [...carried, i];
   }
 
   commitRun();
