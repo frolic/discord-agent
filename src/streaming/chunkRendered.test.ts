@@ -66,6 +66,51 @@ describe("chunkRendered — heading-led chunks", () => {
     expect(chunks).toHaveLength(1);
     expect(chunks[0]!.startsWith("## Section")).toBe(true);
   });
+
+  test("trailing heading-like block does NOT split (regression: streaming orphan)", () => {
+    // Mid-stream snapshot: the model has emitted "Para.\n\n**Skill file**"
+    // and is about to continue " at `path` — more content" on the next
+    // delta. At THIS moment the bold-only paragraph parses as
+    // heading-like, but if we split now we'd post a Discord message
+    // containing just "**Skill file**" — and once the next delta makes
+    // the paragraph multi-child (and no longer heading-like), re-chunking
+    // produces ONE chunk but messages.length is already 2 → orphaned
+    // standalone "**Skill file**" message stuck in Discord. Defer the
+    // split decision until the heading has a block after it.
+    const prep = prepareForDelivery("Done. Here's the summary:\n\n**Skill file**");
+    const chunks = chunkRendered(prep, { hardLimit: 1990 });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toBe("Done. Here's the summary:\n\n**Skill file**");
+  });
+
+  test("heading-like block in the middle still splits (rule still works when complete)", () => {
+    // Once the heading is followed by content, the split fires correctly:
+    // the trailing-block deferral was specifically about in-flight
+    // streaming, not about disabling the rule.
+    const prep = prepareForDelivery(
+      "Done. Here's the summary:\n\n**Skill file** at `path` — documents the flow.\n\nMore content after.",
+    );
+    const chunks = chunkRendered(prep, { hardLimit: 1990 });
+    // First paragraph "**Skill file** at ..." is no longer heading-like
+    // (multi-child); whole thing packs as one chunk.
+    expect(chunks).toHaveLength(1);
+  });
+
+  test("heading mid-stream then completed: chunk count is monotonic", () => {
+    // Simulate the streaming sequence that caused the original bug:
+    // before the fix, the mid-stream snapshot would yield 2 chunks and
+    // the completed snapshot would yield 1 — leaving the second
+    // message orphaned. After the fix, both snapshots yield 1 chunk.
+    const midStream = prepareForDelivery("Done.\n\n**Skill file**");
+    const completed = prepareForDelivery(
+      "Done.\n\n**Skill file** at `path` — content\n- bullet one\n- bullet two",
+    );
+    const midChunks = chunkRendered(midStream, { hardLimit: 1990 });
+    const completedChunks = chunkRendered(completed, { hardLimit: 1990 });
+    expect(midChunks.length).toBeLessThanOrEqual(completedChunks.length);
+    expect(midChunks).toHaveLength(1);
+    expect(completedChunks).toHaveLength(1);
+  });
 });
 
 describe("chunkRendered — separator picking", () => {

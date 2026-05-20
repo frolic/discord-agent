@@ -84,9 +84,23 @@ export function chunkRendered(prep: PreparedDelivery, options: ChunkOptions): st
   for (let i = 0; i < prep.blocks.length; i++) {
     const block = prep.blocks[i]!;
 
-    // Heading-led chunks: a heading-like block always starts its own
-    // Discord message (when there's a run accumulated to finalize).
-    if (runStart >= 0 && isHeadingLike(block.node)) {
+    // Heading-led chunks: a heading-like block starts its own Discord
+    // message — but ONLY when there's at least one block after it.
+    //
+    // Mid-stream, a trailing `**Bold**` paragraph is suspicious: the
+    // model is often about to continue with " at `path` — more content"
+    // on the same line in the next delta, at which point the paragraph
+    // is no longer single-strong-child and no longer heading-like.
+    // Splitting at that transient state posts a Discord message
+    // containing just the bold heading, then on the next flush the
+    // re-chunker produces ONE chunk again — but messages.length is
+    // still 2, so the dispatcher edits messages[0] to the full content
+    // and leaves messages[1] orphaned in Discord with the stale
+    // "**Heading**" text. Skipping the split on the last block defers
+    // the decision until at least one following block has arrived,
+    // which is exactly when we know the heading is real and complete.
+    const isLastBlock = i === prep.blocks.length - 1;
+    if (runStart >= 0 && !isLastBlock && isHeadingLike(block.node)) {
       commitRun();
     }
 
