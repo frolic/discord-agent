@@ -9,6 +9,7 @@
 import type { AnyThreadChannel, Client, GuildTextBasedChannel } from "discord.js";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createStreamingDispatcher } from "../streaming/createStreamingDispatcher.ts";
 
 const threadAutoArchiveMinutes = 1440;
 const initialMessageMaxLength = 1990;
@@ -49,7 +50,7 @@ export function createThreadTool(args: {
         name: params.name,
       });
 
-      await thread.send({ content: params.initial_message.slice(0, initialMessageMaxLength) });
+      await postInitialMessage((content) => thread.send(content), params.initial_message);
 
       wakeUp(thread.id, params.initial_message).catch((error) => {
         console.error(`[thread] wakeUp failed for ${thread.id}:`, error);
@@ -67,6 +68,34 @@ export function createThreadTool(args: {
       };
     },
   });
+}
+
+// Reuse the harness's streaming dispatcher so the initial message goes
+// through the same markdown-aware chunking as every other Discord
+// message (`chunkRendered`). No bespoke splitter: the dispatcher is
+// channel-agnostic (driven by a post callback), so we bind it to the
+// thread's `send` and let it split long initial messages for us.
+// Exported so the dispatcher wiring is testable without a live
+// discord.js thread.
+export async function postInitialMessage(
+  post: (content: string) => Promise<{ id: string }>,
+  message: string,
+): Promise<void> {
+  if (message.length === 0) return;
+  // An initial message is a one-shot append + flush: only `post` ever
+  // fires. `edit` is a no-op to satisfy the dispatcher contract (no
+  // messages exist mid-flush to edit).
+  const dispatcher = createStreamingDispatcher({
+    hardLimit: initialMessageMaxLength,
+    post: async (content) => {
+      const sent = await post(content);
+      if (!sent) return null;
+      return { messageId: sent.id };
+    },
+    edit: async () => {},
+  });
+  dispatcher.append(message);
+  await dispatcher.end();
 }
 
 async function startThread(args: {
