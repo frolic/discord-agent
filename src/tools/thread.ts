@@ -50,7 +50,7 @@ export function createThreadTool(args: {
         name: params.name,
       });
 
-      await postThreadSeed((content) => thread.send(content), params.initial_message);
+      await postInitialMessage((content) => thread.send(content), params.initial_message);
 
       wakeUp(thread.id, params.initial_message).catch((error) => {
         console.error(`[thread] wakeUp failed for ${thread.id}:`, error);
@@ -70,20 +70,21 @@ export function createThreadTool(args: {
   });
 }
 
-// Reuse the harness's streaming dispatcher so the seed post goes through
-// the same markdown-aware chunking as every other Discord message
-// (`chunkRendered`). No bespoke splitter: the dispatcher is
+// Reuse the harness's streaming dispatcher so the initial message goes
+// through the same markdown-aware chunking as every other Discord
+// message (`chunkRendered`). No bespoke splitter: the dispatcher is
 // channel-agnostic (driven by a post callback), so we bind it to the
-// thread's `send` and let it split long seeds for us. Exported so the
-// dispatcher wiring is testable without a live discord.js thread.
-export async function postThreadSeed(
+// thread's `send` and let it split long initial messages for us.
+// Exported so the dispatcher wiring is testable without a live
+// discord.js thread.
+export async function postInitialMessage(
   post: (content: string) => Promise<{ id: string }>,
   message: string,
 ): Promise<void> {
   if (message.length === 0) return;
-  // A seed is a one-shot append + flush: only `post` ever fires. `edit`
-  // is a no-op to satisfy the dispatcher contract (no messages exist
-  // mid-flush to edit).
+  // An initial message is a one-shot append + flush: only `post` ever
+  // fires. `edit` is a no-op to satisfy the dispatcher contract (no
+  // messages exist mid-flush to edit).
   const dispatcher = createStreamingDispatcher({
     hardLimit: initialMessageMaxLength,
     post: async (content) => {
