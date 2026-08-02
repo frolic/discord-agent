@@ -12,6 +12,10 @@ import { Type } from "typebox";
 
 const threadAutoArchiveMinutes = 1440;
 const initialMessageMaxLength = 1990;
+// Small delay between sequential posts in a split thread seed. Discord's
+// per-channel rate limit is 5 messages / 5s; we usually split 2-3, well
+// under it, but the gap is cheap insurance against bursts.
+const splitPostDelayMs = 300;
 
 export function createThreadTool(args: {
   client: Client;
@@ -49,7 +53,7 @@ export function createThreadTool(args: {
         name: params.name,
       });
 
-      await thread.send({ content: params.initial_message.slice(0, initialMessageMaxLength) });
+      await postInitialMessages(thread, params.initial_message);
 
       wakeUp(thread.id, params.initial_message).catch((error) => {
         console.error(`[thread] wakeUp failed for ${thread.id}:`, error);
@@ -67,6 +71,54 @@ export function createThreadTool(args: {
       };
     },
   });
+}
+
+async function postInitialMessages(thread: AnyThreadChannel, message: string): Promise<void> {
+  if (message.length <= initialMessageMaxLength) {
+    await thread.send(message);
+    return;
+  }
+
+  const chunks = splitMessage(message);
+  for (const chunk of chunks) {
+    await thread.send(chunk);
+    if (chunks.length > 1) {
+      await new Promise((r) => setTimeout(r, splitPostDelayMs));
+    }
+  }
+}
+
+function splitMessage(message: string): string[] {
+  const chunks: string[] = [];
+  const paragraphs = message.split(/\n\n+/);
+  let current = "";
+
+  for (const para of paragraphs) {
+    const candidate = current ? `${current}\n\n${para}` : para;
+    if (candidate.length <= initialMessageMaxLength) {
+      current = candidate;
+    } else {
+      if (current) chunks.push(current);
+      if (para.length <= initialMessageMaxLength) {
+        current = para;
+      } else {
+        // Single paragraph too long — split on line boundaries
+        const lines = para.split("\n");
+        current = "";
+        for (const line of lines) {
+          const lineCandidate = current ? `${current}\n${line}` : line;
+          if (lineCandidate.length <= initialMessageMaxLength) {
+            current = lineCandidate;
+          } else {
+            if (current) chunks.push(current);
+            current = line;
+          }
+        }
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 async function startThread(args: {
