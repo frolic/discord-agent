@@ -9,13 +9,10 @@
 import type { AnyThreadChannel, Client, GuildTextBasedChannel } from "discord.js";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createStreamingDispatcher } from "../streaming/createStreamingDispatcher.ts";
 
 const threadAutoArchiveMinutes = 1440;
 const initialMessageMaxLength = 1990;
-// Small delay between sequential posts in a split thread seed. Discord's
-// per-channel rate limit is 5 messages / 5s; we usually split 2-3, well
-// under it, but the gap is cheap insurance against bursts.
-const splitPostDelayMs = 300;
 
 export function createThreadTool(args: {
   client: Client;
@@ -55,6 +52,7 @@ export function createThreadTool(args: {
 
       await postInitialMessages(thread, params.initial_message);
 
+
       wakeUp(thread.id, params.initial_message).catch((error) => {
         console.error(`[thread] wakeUp failed for ${thread.id}:`, error);
       });
@@ -74,51 +72,25 @@ export function createThreadTool(args: {
 }
 
 async function postInitialMessages(thread: AnyThreadChannel, message: string): Promise<void> {
-  if (message.length <= initialMessageMaxLength) {
-    await thread.send(message);
-    return;
-  }
-
-  const chunks = splitMessage(message);
-  for (const chunk of chunks) {
-    await thread.send(chunk);
-    if (chunks.length > 1) {
-      await new Promise((r) => setTimeout(r, splitPostDelayMs));
-    }
-  }
-}
-
-function splitMessage(message: string): string[] {
-  const chunks: string[] = [];
-  const paragraphs = message.split(/\n\n+/);
-  let current = "";
-
-  for (const para of paragraphs) {
-    const candidate = current ? `${current}\n\n${para}` : para;
-    if (candidate.length <= initialMessageMaxLength) {
-      current = candidate;
-    } else {
-      if (current) chunks.push(current);
-      if (para.length <= initialMessageMaxLength) {
-        current = para;
-      } else {
-        // Single paragraph too long — split on line boundaries
-        const lines = para.split("\n");
-        current = "";
-        for (const line of lines) {
-          const lineCandidate = current ? `${current}\n${line}` : line;
-          if (lineCandidate.length <= initialMessageMaxLength) {
-            current = lineCandidate;
-          } else {
-            if (current) chunks.push(current);
-            current = line;
-          }
-        }
-      }
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
+  if (message.length === 0) return;
+  // Reuse the harness's streaming dispatcher so the seed post goes
+  // through the same markdown-aware chunking as every other Discord
+  // message (`chunkRendered`). No bespoke splitter: the dispatcher is
+  // channel-agnostic (driven by post/edit callbacks), so we bind it to
+  // the newly created thread and let it split long seeds for us.
+  const dispatcher = createStreamingDispatcher({
+    hardLimit: initialMessageMaxLength,
+    post: async (content) => {
+      const sent = await thread.send(content);
+      return { messageId: sent.id };
+    },
+    edit: async (messageId, content) => {
+      const existing = await thread.messages.fetch(messageId);
+      await existing.edit({ content });
+    },
+  });
+  dispatcher.append(message);
+  await dispatcher.end();
 }
 
 async function startThread(args: {
