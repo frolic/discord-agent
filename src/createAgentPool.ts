@@ -296,6 +296,25 @@ export function createAgentPool(args: {
       customTools: buildTools({ client, channelId, workspaceDir, sender, tracker, wakeUp }),
     });
 
+    // Sessions persist their model across restarts (pi restores the last
+    // model_change from the session file on resume), which means editing
+    // `settings.json` defaultModel doesn't take effect for existing
+    // sessions. Enforce the configured default here: resolve the settings
+    // model and switch the session to it when they disagree. `setModel`
+    // validates auth, appends a model_change, and persists the new default.
+    const servicesModel = services.settingsManager.getDefaultModel();
+    if (servicesModel && services.modelRegistry) {
+      const slashIndex = servicesModel.indexOf("/");
+      if (slashIndex > 0) {
+        const provider = servicesModel.slice(0, slashIndex);
+        const modelId = servicesModel.slice(slashIndex + 1);
+        const resolved = services.modelRegistry.find(provider, modelId) ?? null;
+        if (resolved && session.model && resolved.id !== session.model.id) {
+          await session.setModel(resolved);
+        }
+      }
+    }
+
     // Wire the deferred bindings now that the session exists.
     sessionRef = session;
     attachLoggerToSession(session);
