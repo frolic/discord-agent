@@ -290,12 +290,17 @@ export function createAgentPool(args: {
     // sessions. Passing the default explicitly at creation fixes that —
     // sdk.js only restores when options.model is unset, so the settings
     // default always wins here.
+    const defaultProvider = services.settingsManager.getDefaultProvider();
     const defaultModel = services.settingsManager.getDefaultModel();
-    const sessionModel = defaultModel
-      ? services.modelRegistry
-          ?.getAvailable()
-          .find((m) => `${m.provider}/${m.id}` === defaultModel)
-      : undefined;
+    // The settings store provider and model id separately; the model registry
+    // keys models the same way (provider + id, e.g. openrouter + deepseek/…).
+    // Join via registry.find — the string form is provider/modelId here but
+    // defaultModel alone omits the provider, so a string-compare find wouldn't
+    // match.
+    const sessionModel =
+      defaultProvider && defaultModel
+        ? services.modelRegistry?.find(defaultProvider, defaultModel) ?? undefined
+        : undefined;
 
     const { session } = await createAgentSessionFromServices({
       services,
