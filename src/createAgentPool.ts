@@ -302,11 +302,11 @@ export function createAgentPool(args: {
     // sessions. Enforce the configured default here: resolve the settings
     // model and switch the session to it when they disagree. `setModel`
     // validates auth, appends a model_change, and persists the new default.
-    const chosenModel = services.settingsManager.getDefaultModel();
-    if (chosenModel && services.modelRegistry) {
+    const defaultModel = services.settingsManager.getDefaultModel();
+    if (defaultModel && services.modelRegistry) {
       const model = services.modelRegistry
         .getAvailable()
-        .find((m) => `${m.provider}/${m.id}` === chosenModel);
+        .find((m) => `${m.provider}/${m.id}` === defaultModel);
       if (model && session.model && model.id !== session.model.id) {
         await session.setModel(model);
       }
