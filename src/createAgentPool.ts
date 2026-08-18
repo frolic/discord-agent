@@ -284,9 +284,23 @@ export function createAgentPool(args: {
       },
     });
 
+    // Sessions persist their model across restarts: pi restores the last
+    // model_change from the session file on resume, so editing
+    // `settings.json` defaultModel wouldn't take effect for existing
+    // sessions. Passing the default explicitly at creation fixes that —
+    // sdk.js only restores when options.model is unset, so the settings
+    // default always wins here.
+    const defaultModel = services.settingsManager.getDefaultModel();
+    const sessionModel = defaultModel
+      ? services.modelRegistry
+          ?.getAvailable()
+          .find((m) => `${m.provider}/${m.id}` === defaultModel)
+      : undefined;
+
     const { session } = await createAgentSessionFromServices({
       services,
       sessionManager,
+      model: sessionModel,
       // Disable pi's auto-registered defaults so the harness reconstructs
       // each built-in tool with this channel's workspace as cwd. Tool-call
       // logging happens via session-event subscription in `DebugLogger`,
@@ -295,22 +309,6 @@ export function createAgentPool(args: {
       noTools: "builtin",
       customTools: buildTools({ client, channelId, workspaceDir, sender, tracker, wakeUp }),
     });
-
-    // Sessions persist their model across restarts (pi restores the last
-    // model_change from the session file on resume), which means editing
-    // `settings.json` defaultModel doesn't take effect for existing
-    // sessions. Enforce the configured default here: resolve the settings
-    // model and switch the session to it when they disagree. `setModel`
-    // validates auth, appends a model_change, and persists the new default.
-    const defaultModel = services.settingsManager.getDefaultModel();
-    if (defaultModel && services.modelRegistry) {
-      const model = services.modelRegistry
-        .getAvailable()
-        .find((m) => `${m.provider}/${m.id}` === defaultModel);
-      if (model && session.model && model.id !== session.model.id) {
-        await session.setModel(model);
-      }
-    }
 
     // Wire the deferred bindings now that the session exists.
     sessionRef = session;
