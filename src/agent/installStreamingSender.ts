@@ -83,6 +83,17 @@ export function installStreamingSender(args: {
         const stopReason = (message as { stopReason?: string }).stopReason;
         const errorMessage = (message as { errorMessage?: string }).errorMessage;
         if (stopReason === "error" && errorMessage) {
+          // Log to journal too — the channel-side "agent error" line is
+          // easy to miss (no debug-channel copy, no stderr) so operators
+          // digging into `journalctl -u …` after the fact see nothing.
+          // Include provider/model for post-mortem: 401/403s here almost
+          // always trace back to a specific provider's credential or a
+          // stale models.json format (e.g. the pi 0.79→0.84 config-value
+          // syntax change).
+          const provider = (message as { provider?: string }).provider;
+          const model = (message as { model?: string }).model;
+          const modelTag = provider || model ? ` [${provider ?? "?"}/${model ?? "?"}]` : "";
+          console.error(`[stream] agent turn errored${modelTag}: ${errorMessage}`);
           sender
             .sendError(new Error(errorMessage))
             .catch((error) => console.error("[stream] sendError failed:", error));

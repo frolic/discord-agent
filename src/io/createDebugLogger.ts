@@ -171,8 +171,50 @@ export function createDebugLogger(args: {
       const startLog = pendingCompactionStartLog;
       pendingCompactionStartLog = null;
       postCompactionEnd(event, startLog);
+      return;
+    }
+    // Surface model-turn errors (auth failures, provider 5xx, malformed
+    // responses) into the debug channel. The channel-facing `sendError`
+    // is a single terse line in the *user* channel; without a copy here,
+    // operators monitoring debug have no signal that anything went wrong.
+    if (event.type === "turn_end" && isAssistantMessageEnd(event.message)) {
+      const msg = event.message as {
+        stopReason?: string;
+        errorMessage?: string;
+        provider?: string;
+        model?: string;
+      };
+      if (msg.stopReason === "error" && msg.errorMessage) {
+        postTurnError({
+          errorMessage: msg.errorMessage,
+          provider: msg.provider,
+          model: msg.model,
+        }).catch((error) => console.error("[debugLogger] turn-error post failed:", error));
+      }
     }
   });
+
+  async function postTurnError(args: {
+    errorMessage: string;
+    provider?: string;
+    model?: string;
+  }): Promise<void> {
+    const channel = await getDebugChannel();
+    if (!channel) return;
+    const link = sourceMessageUrl ?? (await getChannelLink());
+    const head = link ? `[agent error](<${link}>)` : "agent error";
+    const modelTag =
+      args.provider || args.model ? ` · ${args.provider ?? "?"}/${args.model ?? "?"}` : "";
+    const text = `-# ⚠️ ${head}${modelTag}: ${sanitizeBackticks(args.errorMessage)}`.slice(
+      0,
+      hardCharLimit,
+    );
+    await sendDebugMessage({
+      channel,
+      content: text,
+      errorContext: "turn-error post failed",
+    });
+  }
 
   async function postCompactionStart(reason: string): Promise<string | null> {
     const channel = await getDebugChannel();
