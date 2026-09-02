@@ -299,7 +299,7 @@ export function createAgentPool(args: {
     // match.
     const sessionModel =
       defaultProvider && defaultModel
-        ? services.modelRegistry?.find(defaultProvider, defaultModel) ?? undefined
+        ? services.modelRuntime?.getModel(defaultProvider, defaultModel) ?? undefined
         : undefined;
 
     const { session } = await createAgentSessionFromServices({
