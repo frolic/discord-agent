@@ -35,6 +35,10 @@ export function installStreamingSender(args: {
   // Reset on agent_start; cleared once the first text-block dispatcher
   // opens so subsequent blocks don't repeat the reply badge.
   let isFirstTextOfRun = true;
+  // Hold the last turn-level error. If the session will retry, agent_end
+  // has willRetry=true so we suppress the channel error; if it won't retry
+  // (final failure or retries disabled), agent_end surfaces the error.
+  let lastTurnError: { errorMessage: string; modelTag: string } | null = null;
   // Serialize closes so a draining `end()` settles before the next
   // dispatcher's first post lands on the shared writeChain.
   let closeChain: Promise<unknown> = Promise.resolve();
@@ -62,10 +66,18 @@ export function installStreamingSender(args: {
   session.subscribe((event) => {
     if (event.type === "agent_start") {
       isFirstTextOfRun = true;
+      lastTurnError = null;
       return;
     }
     if (event.type === "agent_end") {
       closeCurrent();
+      const willRetry = (event as { willRetry?: boolean }).willRetry;
+      if (lastTurnError && !willRetry) {
+        sender
+          .sendError(new Error(lastTurnError.errorMessage))
+          .catch((error) => console.error("[stream] sendError failed:", error));
+      }
+      lastTurnError = null;
       return;
     }
     if (event.type === "message_end") {
@@ -94,9 +106,9 @@ export function installStreamingSender(args: {
           const model = (message as { model?: string }).model;
           const modelTag = provider || model ? ` [${provider ?? "?"}/${model ?? "?"}]` : "";
           console.error(`[stream] agent turn errored${modelTag}: ${errorMessage}`);
-          sender
-            .sendError(new Error(errorMessage))
-            .catch((error) => console.error("[stream] sendError failed:", error));
+          lastTurnError = { errorMessage, modelTag };
+        } else {
+          lastTurnError = null;
         }
       }
       return;
