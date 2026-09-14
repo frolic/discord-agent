@@ -24,7 +24,7 @@ export function createThreadTool(args: {
     name: "thread",
     label: "create thread",
     description:
-      "Create a Discord thread for multi-step or long-running work. When invoked from inside a thread, the new thread is created in that thread's parent channel (Discord forbids nesting threads). Posts your initial_message as the first message in the thread — that message is visible to the user AND serves as the seed context for the fresh agent session that runs there. Make the initial_message the build brief itself: open with the concrete goal and deliverable, then the user's requirements, constraints, and key context. Do NOT write a generic execution-approach template or lead with process boilerplate — the new session gets everything from this message, and it is the brief the user sees in-channel. Returns the thread ID; the next user message in the thread spins up a brand-new conversation scope, so make initial_message self-contained.",
+      "Create a Discord thread in the current channel for multi-step or long-running work. Posts your initial_message as the first message in the thread — that message is visible to the user AND serves as the seed context for the fresh agent session that runs there. Make the initial_message the build brief itself: open with the concrete goal and deliverable, then the user's requirements, constraints, and key context. Do NOT write a generic execution-approach template or lead with process boilerplate — the new session gets everything from this message, and it is the brief the user sees in-channel. Returns the thread ID; the next user message in the thread spins up a brand-new conversation scope, so make initial_message self-contained.",
     parameters: Type.Object({
       name: Type.String({ description: "thread name (≤100 chars)", maxLength: 100 }),
       initial_message: Type.String({
@@ -104,26 +104,15 @@ async function startThread(args: {
   name: string;
 }): Promise<AnyThreadChannel> {
   const { channel, parentMessageId, name } = args;
-  // Discord doesn't allow nesting threads. When invoked from inside a
-  // thread, create the new thread in the thread's parent channel instead of
-  // refusing — that's what "the current channel" means for a threaded
-  // session, and it's the only way to hand off to a fresh root session.
-  const host =
-    channel.isThread() && channel.parentId
-      ? await channel.guild.channels.fetch(channel.parentId).catch((error) => {
-          console.error(`[thread] fetch parent ${channel.parentId} failed:`, error);
-          return null;
-        })
-      : channel;
-  if (!host || !host.isTextBased() || host.isDMBased() || !("threads" in host)) {
+  if (!("threads" in channel)) {
     throw new Error(
-      host?.isThread()
+      channel.isThread()
         ? "cannot create a thread inside a thread"
         : "this channel type doesn't support thread creation",
     );
   }
   if (parentMessageId) {
-    const parent = await host.messages.fetch(parentMessageId).catch((error) => {
+    const parent = await channel.messages.fetch(parentMessageId).catch((error) => {
       console.error(`[thread] fetch parent ${parentMessageId} failed:`, error);
       return null;
     });
@@ -132,5 +121,5 @@ async function startThread(args: {
     }
     return parent.startThread({ name, autoArchiveDuration: threadAutoArchiveMinutes });
   }
-  return host.threads.create({ name, autoArchiveDuration: threadAutoArchiveMinutes });
+  return channel.threads.create({ name, autoArchiveDuration: threadAutoArchiveMinutes });
 }
