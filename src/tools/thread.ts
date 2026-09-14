@@ -24,12 +24,12 @@ export function createThreadTool(args: {
     name: "thread",
     label: "create thread",
     description:
-      "Create a Discord thread in the current channel for multi-step or long-running work. Posts your initial_message as the first message in the thread — that message is visible to the user AND serves as the seed context for the fresh agent session that runs there. Returns the thread ID; the next user message in the thread spins up a brand-new conversation scope, so make initial_message self-contained.",
+      "Create a Discord thread in the current channel for multi-step or long-running work. Posts your initial_message as the first message in the thread — that message is visible to the user AND serves as the seed context for the fresh agent session that runs there. Make the initial_message the build brief itself: open with the concrete goal and deliverable, then the user's requirements, constraints, and key context. Do NOT write a generic execution-approach template or lead with process boilerplate — the new session gets everything from this message, and it is the brief the user sees in-channel. Returns the thread ID; the next user message in the thread spins up a brand-new conversation scope, so make initial_message self-contained.",
     parameters: Type.Object({
       name: Type.String({ description: "thread name (≤100 chars)", maxLength: 100 }),
       initial_message: Type.String({
         description:
-          "first message posted in the thread. Write it as instructions to a fresh you — include all relevant context, links, file paths, and the goal of the work. The new session won't see this turn's history.",
+          "the build brief — first message posted in the thread. Lead with the concrete goal and deliverable the user asked for, then constraints, requirements, and context (domain, page set, stack, resources, links, file paths). Write it as instructions to a fresh you, but keep the brief front-and-center; don't bury it under an execution-approach header. The new session won't see this turn's history.",
       }),
       parent_message_id: Type.Optional(
         Type.String({
