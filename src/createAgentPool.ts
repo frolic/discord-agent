@@ -227,7 +227,7 @@ export function createAgentPool(args: {
   // per session; in practice every session in our pool sees the same one,
   // so this updates exactly once on the first session unless the user
   // edits `settings.json` mid-run.
-  let currentPresenceModel: string | null = null;
+  let currentPresenceText: string | null = null;
 
   setInterval(evict, 60_000);
 
@@ -251,16 +251,20 @@ export function createAgentPool(args: {
   }
 
   /**
-   * Reflect the resolved provider+model in the bot's Discord presence so
-   * it's visible in the member list at a glance. Skips redundant writes
-   * to avoid pinging the gateway when the model hasn't changed.
+   * Reflect the resolved model in the bot's Discord presence so it's visible
+   * in the member list at a glance. Shows the model name only (no provider
+   * prefix). Skips redundant writes to avoid pinging the gateway when the
+   * model hasn't changed.
    */
   function updateBotPresence(session: AgentSession): void {
     const model = session.model;
     if (!model) return;
-    const text = `${model.provider}/${model.id}`;
-    if (text === currentPresenceModel) return;
-    currentPresenceModel = text;
+    // Just the model name — drop the provider prefix ("deepseek/foo" → "foo").
+    // Discord truncates long activity strings anyway, and the provider is
+    // noise in the member list.
+    const text = model.id.split("/").pop() || model.id;
+    if (text === currentPresenceText) return;
+    currentPresenceText = text;
     client.user?.setActivity(text);
   }
 
