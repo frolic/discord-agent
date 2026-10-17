@@ -115,7 +115,7 @@ not for behavior rules (those go in `SYSTEM.md`) and not for static
 context (that goes in `AGENTS.md`).
 
 For more advanced setups (extra skill paths, npm-installable skill
-packages, prompt templates, themes), see [pi's settings docs](https://github.com/earendil-works/pi/blob/v0.74.0/packages/coding-agent/docs/settings.md#resources).
+packages, prompt templates, themes), see [pi's settings docs](https://github.com/earendil-works/pi/blob/v1.3.0/packages/coding-agent/docs/settings.md#resources).
 
 ## Writing multi-step prompts: order them
 
