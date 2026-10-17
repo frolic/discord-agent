@@ -170,6 +170,30 @@ export function sessionPathFor(channelId: string): string {
 }
 
 /**
+ * Whether the session counts as busy — a run is starting, running, or in
+ * post-run continuation. Wraps `AgentSession.isStreaming`, deliberately:
+ * gating on `session.agent.state.isStreaming` instead leaves a window where a
+ * user message misroutes.
+ *
+ * pi has two busy flags and they flip at different points. The session's own
+ * flag (`_isAgentRunActive`, exposed as `isStreaming`) is set on the first line
+ * of pi's run-start sequence, which then awaits the compaction check and the
+ * `before_agent_start` handlers. `agent.state.isStreaming` only becomes true
+ * inside the later `agent.prompt()` call. So a message arriving in between
+ * finds the agent flag false — we would conclude nothing is in flight and
+ * submit a plain prompt into a run that is already starting, which pi rejects
+ * with "Agent is already processing. Specify streamingBehavior …". The user's
+ * message is then lost, surfacing as a channel error instead of being steered.
+ *
+ * pi widened that window in 1.2.0 (session counts as busy while a run starts);
+ * before that the two flags flipped one statement apart and the race was
+ * effectively unreachable. The session flag has no such window.
+ */
+function isSessionBusy(session: AgentSession): boolean {
+  return session.isStreaming;
+}
+
+/**
  * Resolve immediately if the session isn't compacting; otherwise wait for
  * the next `compaction_end` event. Pi's auto-compaction runs inline in
  * `_processAgentEvent`'s `agent_end` handler before `finishRun()` resolves,
@@ -211,17 +235,17 @@ export function createAgentPool(args: {
     // Age pass: drop entries idle past idleEvictMs.
     const now = Date.now();
     for (const [id, entry] of entries) {
-      if (entry.session.agent.state.isStreaming) continue;
+      if (isSessionBusy(entry.session)) continue;
       if (now - entry.lastActive > config.agent.idleEvictMs) {
         entries.delete(id);
       }
     }
-    // Cap pass: trim oldest non-streaming if still over maxWarm.
+    // Cap pass: trim oldest non-busy if still over maxWarm.
     if (entries.size <= config.agent.maxWarm) return;
     const sorted = [...entries.entries()].sort(([, a], [, b]) => a.lastActive - b.lastActive);
     for (const [id, entry] of sorted) {
       if (entries.size <= config.agent.maxWarm) break;
-      if (entry.session.agent.state.isStreaming) continue;
+      if (isSessionBusy(entry.session)) continue;
       entries.delete(id);
     }
   }
@@ -364,10 +388,11 @@ export function createAgentPool(args: {
     tracker.markPending(channelId);
 
     const images = await collectImageAttachments(message);
-    const promptOptions = buildPromptOptions({
-      images,
-      isStreaming: entry.session.agent.state.isStreaming,
-    });
+    // Read the busy flag once, then use that same value for both the option we
+    // build and the branch we take — the two must agree, or the submitted
+    // prompt carries the wrong disposition. See `isSessionBusy`.
+    const isBusy = isSessionBusy(entry.session);
+    const promptOptions = buildPromptOptions({ images, isBusy });
     // Format wake/steer prompts the same way the `history` tool formats
     // its lines, so the agent always sees the source metadata — including
     // the message_id (for `react` / `send`'s in_reply_to) and edited_at
@@ -377,7 +402,7 @@ export function createAgentPool(args: {
     if (!client.user) throw new Error("client.user not set — login did not complete");
     const formattedPrompt = formatMessage(message, client.user.id);
 
-    if (entry.session.agent.state.isStreaming) {
+    if (isBusy) {
       // Steering: a turn is in flight → inject this as a steer. Ack with
       // 👀 immediately so the user knows the harness received their
       // interrupting message (the agent might still be deep in tool calls
