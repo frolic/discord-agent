@@ -22,11 +22,26 @@
  *   (commands are one-shot), and edits to channels without an active
  *   pool entry are skipped — an edit to a stale channel isn't steering
  *   anything.
+ *
+ * Channel scoping: when `config.channelAllowlist` is set, both sources drop
+ * events from channels outside the list (threads resolve to their parent
+ * channel). See `./channelAllowlist.ts`.
  */
-import type { Client, Message, PartialMessage } from "discord.js";
+import type { Channel, Client, Message, PartialMessage } from "discord.js";
 import type { AgentPool } from "./createAgentPool.ts";
 import type { ActiveTracker } from "./active/createActiveTracker.ts";
 import { commandRegistry } from "./commands/registry.ts";
+import { config } from "./config.ts";
+import { isChannelAllowed } from "./channelAllowlist.ts";
+
+/** Does the allowlist cover this channel (or the thread's parent)? */
+function channelMayWake(channel: Channel): boolean {
+  return isChannelAllowed({
+    allowlist: config.channelAllowlist,
+    channelId: channel.id,
+    parentChannelId: channel.isThread() ? channel.parentId : null,
+  });
+}
 
 export function installRouter(args: {
   client: Client;
@@ -42,6 +57,8 @@ export function installRouter(args: {
     if (message.author.id === client.user.id) return;
     // Defensive: DM intents are off, but if a DM ever leaks through, ignore.
     if (!message.guildId) return;
+
+    if (!channelMayWake(message.channel)) return;
 
     const channelId = message.channel.id;
     // Bump the catchup cursor for ANY user message we receive — including
@@ -68,6 +85,7 @@ export function installRouter(args: {
     // (scheduler triggers edited messages, etc.).
     if (message.author.id === client.user.id) return;
     if (!message.guildId) return;
+    if (!channelMayWake(message.channel)) return;
     // Discord fires messageUpdate for non-content reasons (embed/link
     // preview loading, pin state, etc.). If we can see the old content
     // and it matches the new content, it isn't a real edit — drop it.

@@ -14,6 +14,7 @@
  * skill paths, etc.) — none of those need our env vars.
  */
 import { resolve } from "node:path";
+import { parseChannelAllowlist } from "./channelAllowlist.ts";
 
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? process.cwd());
 
@@ -39,4 +40,10 @@ export const config = {
   // this also redirects the WebSocket gateway, since discord.js fetches
   // the gateway URL from the REST API. Default unset (use discord.com).
   discordApiUrl: process.env.DISCORD_API_URL || null,
+  // Channel ids the agent is allowed to participate in, comma/whitespace
+  // separated. Empty (the default) keeps the historical single-player
+  // behaviour: any channel or thread the bot can see wakes it. See
+  // `./channelAllowlist.ts` for the routing rule (threads inherit their
+  // parent channel).
+  channelAllowlist: parseChannelAllowlist(process.env.DISCORD_CHANNEL_ALLOWLIST),
 } as const;
