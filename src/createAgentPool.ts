@@ -44,6 +44,7 @@ import { createAttachTool } from "./tools/attach.ts";
 import { createReactTool } from "./tools/react.ts";
 import { createHistoryTool } from "./tools/history.ts";
 import { createThreadTool } from "./tools/thread.ts";
+import { createJobTool } from "./tools/job.ts";
 import { createRestartSelfTool } from "./tools/restartSelf.ts";
 import { collectImageAttachments } from "./collectImageAttachments.ts";
 import { formatMessage } from "./formatMessage.ts";
@@ -123,6 +124,7 @@ function buildTools(args: {
     createReactTool({ client, channelId }),
     createHistoryTool({ client, channelId }),
     createThreadTool({ client, channelId, wakeUp }),
+    createJobTool(),
     createRestartSelfTool({ client, channelId, tracker }),
   ] as unknown as ToolDefinition[];
 }
