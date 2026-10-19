@@ -173,6 +173,12 @@ export function createDebugLogger(args: {
       postCompactionEnd(event, startLog);
       return;
     }
+    if (event.type === "auto_retry_start") {
+      postAutoRetryStart(event).catch((error) =>
+        console.error("[debugLogger] auto-retry post failed:", error),
+      );
+      return;
+    }
     // Surface model-turn errors (auth failures, provider 5xx, malformed
     // responses) into the debug channel. The channel-facing `sendError`
     // is a single terse line in the *user* channel; without a copy here,
@@ -213,6 +219,29 @@ export function createDebugLogger(args: {
       channel,
       content: text,
       errorContext: "turn-error post failed",
+    });
+  }
+
+  async function postAutoRetryStart(event: {
+    attempt: number;
+    maxAttempts: number;
+    delayMs: number;
+    errorMessage: string;
+  }): Promise<void> {
+    const channel = await getDebugChannel();
+    if (!channel) return;
+    const link = sourceMessageUrl ?? (await getChannelLink());
+    const head = link ? `[auto-retry](<${link}>)` : "auto-retry";
+    const delaySec = Math.round(event.delayMs / 1000);
+    const delayTag = delaySec > 0 ? ` in ${delaySec}s` : "";
+    const text = `-# 🔁 ${head} (${event.attempt}/${event.maxAttempts})${delayTag}: ${sanitizeBackticks(event.errorMessage)}`.slice(
+      0,
+      hardCharLimit,
+    );
+    await sendDebugMessage({
+      channel,
+      content: text,
+      errorContext: "auto-retry post failed",
     });
   }
 
