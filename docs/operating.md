@@ -64,7 +64,7 @@ home dir per bot.
 
 ## Environment
 
-Four env vars; everything else lives in `settings.json` (pi-native).
+Five env vars; everything else lives in `settings.json` (pi-native).
 
 | Variable | Required? | What it is |
 |---|---|---|
@@ -72,12 +72,16 @@ Four env vars; everything else lives in `settings.json` (pi-native).
 | `<PROVIDER>_API_KEY` | required | API key — pi resolves the provider from whichever `*_API_KEY` is set (e.g., `OPENROUTER_API_KEY` → OpenRouter) |
 | `DEBUG_CHANNEL_ID` | optional | Discord channel ID to cross-post operational logs (tool calls, per-call usage, compaction, lifecycle) |
 | `PI_CODING_AGENT_DIR` | optional | Override `agentDir` if cwd is awkward for your deployment. Default: cwd. |
+| `DISCORD_CHANNEL_ALLOWLIST` | optional | Comma or whitespace separated channel ids the agent may participate in. Threads resolve to their parent channel. Unset: every channel the bot can see wakes it. |
 
 **Recommended channel layout.** The agent is single-player — it
 responds to every non-bot message in any channel or thread it can
 see, no @mention required, so channel membership is what scopes
 participation. Invite it only into rooms where direct conversation
-with anyone present is what you want. A typical setup uses two
+with anyone present is what you want. If the bot is in rooms it should
+only *read*, set `DISCORD_CHANNEL_ALLOWLIST` to the channels it may
+speak in — threads inside an allowed channel keep working, everything
+else is dropped before a session is created. A typical setup uses two
 channels: one for talking *to* the agent (where users post), and a
 second `DEBUG_CHANNEL_ID` for watching what it's *doing* (tool
 activity, restarts, compaction, errors). Either side can collapse —
