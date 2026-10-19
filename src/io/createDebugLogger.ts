@@ -313,13 +313,23 @@ export function createDebugLogger(args: {
     const channel = await getDebugChannel();
     if (!channel) return;
     const errorText = extractToolErrorText(args.result);
-    const text = `-# ❌ ${args.toolName} failed: ${errorText}`.slice(0, hardCharLimit);
+    // Expected non-zero shell exits (grep with no match, `gh pr checks`
+    // while pending, diff on different files) are not real failures —
+    // render them as a compact `bash → exit N` line instead of a full
+    // ❌ error, with a preview of the command's own output when present.
+    const exitMatch = errorText.match(/Command exited with code (\d+)/);
+    const text = exitMatch
+      ? `-# ${args.toolName} → exit ${exitMatch[1]}${errorText.startsWith(exitMatch[0])
+          ? ""
+          : ` · ${errorText.split(exitMatch[0], 1)[0]?.replace(/ · $/, "") ?? ""}`}`
+      : `-# ❌ ${args.toolName} failed: ${errorText}`;
+    const limited = text.slice(0, hardCharLimit);
     // Await the start-log promise so we get the resolved message ID
     // even if its send was still in flight when this fired.
     const replyTo = args.startLog ? await args.startLog : null;
     await sendDebugMessage({
       channel,
-      content: text,
+      content: limited,
       replyTo: replyTo ?? undefined,
       errorContext: "tool failure post failed",
     });
