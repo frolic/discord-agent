@@ -30,6 +30,7 @@ import {
   createAgentSessionServices,
   createBashToolDefinition,
   createEditToolDefinition,
+  createMcpExtension,
   createReadToolDefinition,
   createWriteToolDefinition,
   SessionManager,
@@ -37,6 +38,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { config } from "./config.ts";
+import { loadAgentMcpConfig } from "./mcp/loadAgentMcpConfig.ts";
 import { createDiscordSender, type DiscordSender } from "./io/createDiscordSender.ts";
 import { createDebugLogger, type DebugLogger } from "./io/createDebugLogger.ts";
 import { installTypingIndicator } from "./io/installTypingIndicator.ts";
@@ -303,12 +305,28 @@ export function createAgentPool(args: {
     // We inject harnessRules + sourceHint as the append-system-prompt so
     // the harness layer always lands at the end regardless of what the
     // user's SYSTEM.md says.
+    // `extensionFactories` is how pi's own CLI app loads its built-ins, and
+    // MCP is one of them (pi 1.x). Without this the `mcp.json` in agentDir is
+    // never read: `createAgentSessionServices` only loads factories the caller
+    // passes, so MCP servers silently don't exist. Servers come from
+    // `<agentDir>/mcp.json`; tools arrive as `mcp__<server>__<tool>`.
     const services = await createAgentSessionServices({
       cwd: workspaceDir,
       agentDir: config.agentDir,
       resourceLoaderOptions: {
         additionalSkillPaths: [resolve(config.agentDir, "skills")],
+        additionalExtensionPaths: ["builtin:mcp"],
         appendSystemPrompt: sourceHint ? [harnessRules, sourceHint] : [harnessRules],
+        extensionFactories: [
+          {
+            name: "mcp",
+            factory: createMcpExtension({
+              loadConfig: () => loadAgentMcpConfig(config.agentDir),
+            }),
+            replaceable: true,
+            builtin: true,
+          },
+        ],
       },
     });
 
@@ -330,6 +348,12 @@ export function createAgentPool(args: {
         ? services.modelRuntime?.getModel(defaultProvider, defaultModel) ?? undefined
         : undefined;
 
+    // Load the MCP servers declared in `<agentDir>/mcp.json` and connect them
+    // once the session starts. `extensionFactories` + `builtin:mcp` mirrors how
+    // pi's own app wires its built-ins: the factory registers the extension, the
+    // `builtin:mcp` path activates it. The custom `loadConfig` is required
+    // because the extension context has no `agentDir`, so pi's default loader
+    // would look in `~/.pi/agent` and never see this bot's config.
     const { session } = await createAgentSessionFromServices({
       services,
       sessionManager,
@@ -341,6 +365,18 @@ export function createAgentPool(args: {
       // unwrapped.
       noTools: "builtin",
       customTools: buildTools({ client, channelId, workspaceDir, sender, tracker, wakeUp }),
+    });
+
+    // pi's app layer binds extensions after creating a session; without this
+    // call no extension's `session_start` handler runs. That matters beyond
+    // MCP: any extension that registers work on session start (rather than at
+    // load time) would silently do nothing. `mode: "print"` is the headless
+    // shape — extensions get `hasUI: false` and skip terminal-only paths.
+    await session.bindExtensions({
+      mode: "print",
+      onError: (extensionError) => {
+        console.error(`[extensions] ${extensionError.extensionPath} (${extensionError.event}): ${extensionError.error}`);
+      },
     });
 
     // Wire the deferred bindings now that the session exists.
