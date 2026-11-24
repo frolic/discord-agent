@@ -15,6 +15,7 @@
  */
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { parseChatMode } from "./agent/chatMode.ts";
 
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? process.cwd());
 
@@ -45,6 +46,12 @@ export const config = {
   // them and reverts this checkout if they stop arriving. Keep the default
   // in sync with `/usr/local/sbin/pollux-deadmans-switch.sh`.
   livenessDir: resolve(process.env.LIVENESS_DIR ?? resolve(homedir(), ".pollux")),
+  // How assistant output reaches the user channel: `stream` (assistant text is
+  // the reply, streamed into edited Discord messages) or `tools` (replies are
+  // `send_message` calls; assistant text is logged, never delivered). Both paths
+  // stay in the tree — flipping the mode is one env change plus a restart, which
+  // is also how an A/B comparison is run. Throws on an unknown value.
+  chatMode: parseChatMode(process.env.CHAT_MODE),
   // Harness checkout root. Its git SHA is stamped into the ready marker so
   // the supervisor can tell whether a revert to `known-good` would actually
   // change anything.

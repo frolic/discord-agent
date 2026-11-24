@@ -15,6 +15,8 @@
  * envelope tool. Now the envelope is the assistant text stream itself.
  */
 import type { AttachmentBuilder, Client, Message, SendableChannels } from "discord.js";
+import { chunkRendered } from "../streaming/chunkRendered.ts";
+import { prepareForDelivery } from "../streaming/prepareForDelivery.ts";
 import { buildAttachments } from "./buildAttachments.ts";
 import { fetchSendableChannel } from "./fetchSendableChannel.ts";
 import {
@@ -28,6 +30,27 @@ const hardCharLimit = 1990;
 export interface OpenStreamOptions {
   /** Discord message ID this stream's first message should reply-thread under. */
   inReplyTo?: string;
+}
+
+export interface SendTextOptions {
+  /** Raw model markdown. Rendered and chunked exactly as the streamed path does. */
+  text: string;
+  /** Discord message ID the FIRST chunk should reply-thread under. */
+  inReplyTo?: string;
+}
+
+export interface SendTextResult {
+  /** IDs of the messages that landed, in order. Empty when nothing was posted. */
+  messageIds: readonly string[];
+  /** True when at least one chunk failed to post (the list is then incomplete). */
+  partial: boolean;
+}
+
+export interface EditTextResult {
+  ok: boolean;
+  /** Length of the rendered payload Discord would receive. */
+  renderedLength: number;
+  error?: string;
 }
 
 export interface AttachOptions {
@@ -53,6 +76,22 @@ export interface DiscordSender {
    * tool — text streaming covers the common case so this is for files.
    */
   attach(options: AttachOptions): Promise<AttachResult>;
+  /**
+   * Post a finished text reply as one or more messages. Same markdown rendering
+   * and chunking as `openStream`, for the non-streaming delivery path (the
+   * `send_message` tool when nothing was streamed).
+   */
+  sendText(options: SendTextOptions): Promise<SendTextResult>;
+  /**
+   * Replace the whole content of one already-posted message. Refuses (rather
+   * than truncating) when the rendered text would exceed Discord's limit.
+   */
+  editText(messageId: string, text: string): Promise<EditTextResult>;
+  /**
+   * Delete a message this bot posted. Only used to clean up a superseded
+   * streamed preview.
+   */
+  deleteMessage(messageId: string): Promise<void>;
   /**
    * Surface an unexpected error directly to the user channel. Used when
    * the agent loop throws outside a normal turn.
@@ -119,6 +158,45 @@ export function createDiscordSender(args: { client: Client; channelId: string })
     });
   }
 
+  async function sendText(options: SendTextOptions): Promise<SendTextResult> {
+    const chunks = chunkRendered(prepareForDelivery(options.text), { hardLimit: hardCharLimit });
+    const messageIds: string[] = [];
+    for (const [index, chunk] of chunks.entries()) {
+      const message = await enqueue(() =>
+        postMessage({ content: chunk, inReplyTo: index === 0 ? options.inReplyTo : undefined }),
+      );
+      if (!message) return { messageIds, partial: true };
+      messageIds.push(message.id);
+    }
+    return { messageIds, partial: false };
+  }
+
+  async function editText(messageId: string, text: string): Promise<EditTextResult> {
+    const rendered = prepareForDelivery(text).rendered;
+    if (rendered.trim().length === 0) {
+      return { ok: false, renderedLength: 0, error: "refusing to edit a message to empty content" };
+    }
+    if (rendered.length > hardCharLimit) {
+      return {
+        ok: false,
+        renderedLength: rendered.length,
+        error: `rendered content is ${rendered.length} chars, over the ${hardCharLimit} char limit — send it as a new message instead`,
+      };
+    }
+    await enqueue(() => editMessage(messageId, rendered));
+    return { ok: true, renderedLength: rendered.length };
+  }
+
+  async function deleteMessage(messageId: string): Promise<void> {
+    await enqueue(async () => {
+      const channel = await getChannel();
+      if (!channel) return;
+      await channel.messages.delete(messageId).catch((error) => {
+        console.error(`[sender] delete message ${messageId} failed:`, error);
+      });
+    });
+  }
+
   function openStream(options: OpenStreamOptions): StreamingDispatcher {
     let isFirstPost = true;
     return createStreamingDispatcher({
@@ -137,6 +215,7 @@ export function createDiscordSender(args: { client: Client; channelId: string })
       edit: async (messageId, content) => {
         await enqueue(() => editMessage(messageId, content));
       },
+      deleteMessage,
     });
   }
 
@@ -154,5 +233,5 @@ export function createDiscordSender(args: { client: Client; channelId: string })
     await enqueue(() => postMessage({ content: text }));
   }
 
-  return { openStream, attach, sendError };
+  return { openStream, sendText, editText, deleteMessage, attach, sendError };
 }

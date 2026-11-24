@@ -6,8 +6,8 @@
  * wires three I/O subsystems on top of a fresh agent session:
  *
  * - `DiscordSender` — the bot's outbound user-channel writes: streamed
- *   text dispatchers, file attachments via the `attach` tool, error
- *   surfacing.
+ *   text dispatchers, file attachments via the `attach` tool, finished
+ *   `send_message` payloads, error surfacing.
  * - `DebugLogger` — operational logging in the debug channel; pure
  *   subscriber to session events (`tool_execution_start/end`,
  *   `message_end`, `compaction_start/end`). Posts start, failure,
@@ -21,6 +21,16 @@
  * streaming-sender install (`installStreamingSender`) routes assistant
  * text deltas into the sender and surfaces errors that fall outside the
  * normal tool path.
+ *
+ * `CHAT_MODE` decides which delivery path exists (see `agent/chatMode.ts`):
+ *
+ * - `stream` — assistant text deltas stream into Discord; the reply IS the text.
+ * - `tools` — assistant text is not delivered at all; `send_message` posts the
+ *   reply, `think` holds the reasoning, and the same typing effect comes from
+ *   previewing the `send_message` argument stream
+ *   (`createSendMessageDelivery`). Provider reasoning is switched off so `think`
+ *   is the only reasoning outlet — thinking tokens and a reasoning tool would
+ *   otherwise be two competing channels for the same job.
  */
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -45,11 +55,16 @@ import { createReactTool } from "./tools/react.ts";
 import { createHistoryTool } from "./tools/history.ts";
 import { createThreadTool } from "./tools/thread.ts";
 import { createRestartSelfTool } from "./tools/restartSelf.ts";
+import { createSendMessageTool } from "./tools/sendMessage.ts";
+import { createEditMessageTool } from "./tools/editMessage.ts";
+import { createThinkTool } from "./tools/think.ts";
 import { collectImageAttachments } from "./collectImageAttachments.ts";
 import { formatMessage } from "./formatMessage.ts";
 import { buildPromptOptions } from "./agent/buildPromptOptions.ts";
-import { harnessRules } from "./agent/prompts.ts";
+import { buildHarnessRules } from "./agent/prompts.ts";
 import { installStreamingSender } from "./agent/installStreamingSender.ts";
+import { createSendMessageDelivery } from "./agent/createSendMessageDelivery.ts";
+import type { ChatDelivery } from "./agent/chatDelivery.ts";
 import { installActiveTracker } from "./active/installActiveTracker.ts";
 import type { ActiveTracker } from "./active/createActiveTracker.ts";
 
@@ -112,8 +127,13 @@ function buildTools(args: {
   sender: DiscordSender;
   tracker: ActiveTracker;
   wakeUp: (channelId: string, prompt: string) => Promise<void>;
+  /**
+   * Present only in `CHAT_MODE=tools`: the hand-off `send_message` claims its
+   * already-streamed reply from.
+   */
+  chatDelivery: ChatDelivery | null;
 }): ToolDefinition[] {
-  const { client, channelId, workspaceDir, sender, tracker, wakeUp } = args;
+  const { client, channelId, workspaceDir, sender, tracker, wakeUp, chatDelivery } = args;
   return [
     createBashToolDefinition(workspaceDir),
     createReadToolDefinition(workspaceDir),
@@ -124,7 +144,45 @@ function buildTools(args: {
     createHistoryTool({ client, channelId }),
     createThreadTool({ client, channelId, wakeUp }),
     createRestartSelfTool({ client, channelId, tracker }),
+    // The reply path in `tools` mode — there is no equivalent in `stream` mode,
+    // where assistant text is the reply.
+    ...(chatDelivery
+      ? [
+          createSendMessageTool({ sender, delivery: chatDelivery }),
+          createEditMessageTool({ client, channelId, sender }),
+          createThinkTool({ channelId }),
+        ]
+      : []),
   ] as unknown as ToolDefinition[];
+}
+
+/**
+ * Assert this mode's thinking level on every session acquisition.
+ *
+ * `tools` mode turns provider reasoning **off** (`session.setThinkingLevel`
+ * clamps to what the model supports): the whole point of the mode is that the
+ * `think` tool is the single, inspectable reasoning outlet. Leaving reasoning on
+ * gives two competing outlets — invisible thinking tokens *and* `think` — and the
+ * model splits the same job between them.
+ *
+ * `stream` mode asserts the configured default explicitly instead of relying on
+ * the session file. pi persists a `thinking_level_change` entry, so a session
+ * last used in `tools` mode would otherwise come back with reasoning off and
+ * silently lose its reasoning in stream mode too — a mode switch has to be
+ * symmetric, not a one-way trip.
+ *
+ * `setThinkingLevel` only writes a session entry when the level actually changes,
+ * so the steady state costs nothing.
+ */
+function applyChatModeThinkingLevel(
+  session: AgentSession,
+  settingsDefault: Parameters<AgentSession["setThinkingLevel"]>[0] | undefined,
+): void {
+  if (config.chatMode === "tools") {
+    session.setThinkingLevel("off");
+    return;
+  }
+  if (settingsDefault) session.setThinkingLevel(settingsDefault);
 }
 
 export interface AgentPool {
@@ -292,6 +350,20 @@ export function createAgentPool(args: {
       },
       getContextUsage: () => sessionRef?.getContextUsage() ?? null,
     });
+    // Tools-mode reply path. Constructed before the session (the tool array is
+    // an argument to session creation) and wired to it afterwards — the same
+    // deferred-subscription shape the debug logger uses.
+    let attachDeliveryToSession: (session: AgentSession) => void = () => {};
+    const chatDelivery =
+      config.chatMode === "tools"
+        ? createSendMessageDelivery({
+            sender,
+            getReplyTarget: () => entries.get(channelId)?.replyTarget,
+            subscribe: (handler) => {
+              attachDeliveryToSession = (session) => session.subscribe(handler);
+            },
+          })
+        : null;
     const sessionManager = SessionManager.open(sessionPath, undefined, workspaceDir);
 
     // Pi's services helper builds AuthStorage, ModelRegistry,
@@ -303,12 +375,15 @@ export function createAgentPool(args: {
     // We inject harnessRules + sourceHint as the append-system-prompt so
     // the harness layer always lands at the end regardless of what the
     // user's SYSTEM.md says.
+    const harnessRules = buildHarnessRules(config.chatMode);
     const services = await createAgentSessionServices({
       cwd: workspaceDir,
       agentDir: config.agentDir,
       resourceLoaderOptions: {
         additionalSkillPaths: [resolve(config.agentDir, "skills")],
-        appendSystemPrompt: sourceHint ? [harnessRules, sourceHint] : [harnessRules],
+        appendSystemPrompt: sourceHint
+        ? [harnessRules, sourceHint]
+        : [harnessRules],
       },
     });
 
@@ -340,12 +415,22 @@ export function createAgentPool(args: {
       // not per-tool wrapping — so the customTools list passes through
       // unwrapped.
       noTools: "builtin",
-      customTools: buildTools({ client, channelId, workspaceDir, sender, tracker, wakeUp }),
+      customTools: buildTools({
+        client,
+        channelId,
+        workspaceDir,
+        sender,
+        tracker,
+        wakeUp,
+        chatDelivery,
+      }),
     });
 
     // Wire the deferred bindings now that the session exists.
     sessionRef = session;
     attachLoggerToSession(session);
+    attachDeliveryToSession(session);
+    applyChatModeThinkingLevel(session, services.settingsManager.getDefaultThinkingLevel());
     installTypingIndicator({ client, channelId, session });
     updateBotPresence(session);
 
@@ -361,6 +446,9 @@ export function createAgentPool(args: {
       session,
       sender,
       getReplyTarget: () => entry.replyTarget,
+      mode: config.chatMode,
+      client,
+      channelId,
     });
     installActiveTracker({ channelId, session, tracker });
 

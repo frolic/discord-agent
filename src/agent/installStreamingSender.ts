@@ -11,12 +11,29 @@
  *     under the user message that woke the agent (when known); later
  *     blocks don't, so a multi-step turn doesn't repeat the reply badge.
  *
- * Replaces `installEnvelopeEnforcement`. The "envelope" is now the
+ * Replaces `installEnvelopeEnforcement`. In stream mode the "envelope" is the
  * assistant text stream itself; raw text IS the visible reply.
+ *
+ * In `CHAT_MODE=tools` assistant text is not the delivery path any more — replies
+ * go through `send_message` (see `createSendMessageDelivery.ts`) — so no
+ * dispatcher is opened for text. What still belongs here in that mode:
+ *
+ * - **turn errors** are surfaced the same way (they are harness output, not
+ *   assistant prose, and silence would look like a hung agent);
+ * - **agent_end** still closes anything left open;
+ * - **stray text** — assistant prose in a mode where prose goes nowhere — is
+ *   posted to the debug channel rather than dropped. Dropping it would make a
+ *   model that forgot to call a tool look like it never answered.
  */
+import type { Client } from "discord.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { DiscordSender } from "../io/createDiscordSender.ts";
+import { postDebugLine } from "../io/postDebugLine.ts";
 import type { StreamingDispatcher } from "../streaming/createStreamingDispatcher.ts";
+import type { ChatMode } from "./chatMode.ts";
+
+/** How much stray prose reaches the log channel — the point is that it exists, not its full text. */
+const strayTextLimit = 1600;
 
 export function installStreamingSender(args: {
   session: AgentSession;
@@ -27,8 +44,23 @@ export function installStreamingSender(args: {
    * (restart prompts, !clear notices) with no real user message target.
    */
   getReplyTarget: () => string | undefined;
+  /** Delivery path for assistant text. See `agent/chatMode.ts`. */
+  mode: ChatMode;
+  /** Only used to post stray tools-mode prose to the debug channel. */
+  client: Client;
+  channelId: string;
 }): void {
-  const { session, sender, getReplyTarget } = args;
+  const { session, sender, getReplyTarget, mode, client, channelId } = args;
+
+  /** Tools-mode prose that nobody will read unless we log it. */
+  async function postStrayText(text: string): Promise<void> {
+    const body =
+      text.length > strayTextLimit ? `${text.slice(0, strayTextLimit)}… (truncated)` : text;
+    await postDebugLine({
+      client,
+      content: `-# 💬 stray tools-mode text in <#${channelId}> — NOT delivered to the user\n${body}`,
+    });
+  }
 
   let currentDispatcher: StreamingDispatcher | null = null;
   let currentContentIndex: number | null = null;
@@ -103,6 +135,16 @@ export function installStreamingSender(args: {
     }
     if (event.type === "message_update") {
       const ame = event.assistantMessageEvent;
+      if (mode === "tools") {
+        // No text dispatcher in this mode: the streamed reply path is
+        // `send_message`'s argument stream (createSendMessageDelivery.ts).
+        if (ame.type === "text_end" && ame.content.trim().length > 0) {
+          void postStrayText(ame.content).catch((error) =>
+            console.error("[stream] stray-text log failed:", error),
+          );
+        }
+        return;
+      }
       if (ame.type === "text_delta") {
         const dispatcher =
           currentContentIndex === ame.contentIndex && currentDispatcher

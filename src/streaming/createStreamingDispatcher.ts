@@ -35,6 +35,13 @@ export interface DispatcherConfig {
   post: (content: string) => Promise<{ messageId: string } | null>;
   /** Edit an existing Discord message. Rejection is logged; next delta retries. */
   edit: (messageId: string, content: string) => Promise<void>;
+  /**
+   * Delete a message this dispatcher posted. Only used when `replaceSource`
+   * shortens the source so much that previously posted messages no longer
+   * correspond to any chunk. Optional: without it a surplus message is left in
+   * place and logged, which is the safe default for callers that cannot delete.
+   */
+  deleteMessage?: (messageId: string) => Promise<void>;
   /** Absolute per-message render-character cap. Discord's is 2000; production passes ~1990. */
   hardLimit: number;
   /**
@@ -55,6 +62,15 @@ export interface StreamingDispatcher {
   end(): Promise<void>;
   /** Reset state for a fresh stream (e.g., new text block after a tool call). */
   reset(): void;
+  /**
+   * Swap the accumulated source for an authoritative version of the same
+   * content, then re-render. Used when a live preview was built from a partial
+   * read (model tool-call arguments mid-stream) and the final text is known:
+   * the dispatcher edits the messages it already posted instead of posting a
+   * duplicate, so a half-decoded preview is corrected in place rather than
+   * becoming the delivered content.
+   */
+  replaceSource(raw: string): void;
   /** IDs of every Discord message posted by this dispatcher in order. */
   getPostedMessageIds(): readonly string[];
 }
@@ -71,7 +87,8 @@ interface DiscordMessage {
 }
 
 export function createStreamingDispatcher(config: DispatcherConfig): StreamingDispatcher {
-  const { post, edit, hardLimit, flushIntervalMs = 1000, timer = realTimer } = config;
+  const { post, edit, deleteMessage, hardLimit, flushIntervalMs = 1000, timer = realTimer } =
+    config;
 
   // Full source from start of stream, never sliced. Each flush re-parses
   // the entire thing and re-derives chunks; sealed messages stabilize
@@ -154,6 +171,24 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
       }
       messages.push({ id: result.messageId, lastSent: desired });
     }
+    // A replacement source can be shorter than the preview it replaces (a
+    // partial unescape that produced extra chunks, then got corrected down).
+    // Nothing corresponds to those messages any more — remove them rather than
+    // leaving a stale fragment as part of the reply.
+    if (messages.length > chunks.length) {
+      const surplus = messages.splice(chunks.length);
+      for (const message of surplus) {
+        if (!deleteMessage) {
+          console.error(
+            `[streaming] source shrank below posted messages; cannot remove ${message.id}`,
+          );
+          continue;
+        }
+        await deleteMessage(message.id).catch((error) =>
+          console.error("[streaming] delete of superseded message failed:", error),
+        );
+      }
+    }
   }
 
   function append(delta: string): void {
@@ -170,6 +205,12 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
     ending = false;
   }
 
+  function replaceSource(raw: string): void {
+    if (raw === accumulatedRaw) return;
+    accumulatedRaw = raw;
+    if (raw.length > 0) startTimer();
+  }
+
   function reset(): void {
     stopTimer();
     accumulatedRaw = "";
@@ -181,5 +222,5 @@ export function createStreamingDispatcher(config: DispatcherConfig): StreamingDi
     return messages.map((m) => m.id);
   }
 
-  return { append, end, reset, getPostedMessageIds };
+  return { append, end, replaceSource, reset, getPostedMessageIds };
 }
