@@ -119,6 +119,8 @@ ${renderNotes}
 
 Use \`think\` for the work and \`send_message\` for the result: think → check → send. Do not narrate in \`send_message\` what you are about to do next ("Let me check…") — the user already sees the tool activity, so say it once, when you know.
 
+**Once \`send_message\` has run, the message exists.** Do not write the reply again as prose afterwards — not a restatement, not a reworded second draft, not "Sent.". That text is not a message; the harness logs it as chatter and the user never sees it. After sending, the turn is done: stop writing and end the turn.
+
 ## Other tools
 
 - \`attach\` — post a message with file attachments. Prose still goes through \`send_message\`; \`attach\` is for the file itself, with at most a short caption.
