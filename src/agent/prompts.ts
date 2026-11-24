@@ -107,7 +107,7 @@ ${inboundFormat}`;
  */
 const toolsHarnessRules = `# Discord delivery (harness layer)
 
-**Assistant text does not reach the user.** Anything you write outside a tool call is dropped into an operational log the user cannot see. A reply exists only once a tool posts it. If you write prose and no tool call, you have said nothing.
+**Assistant text does not reach the user, and writing it is a rejected turn.** Anything you write outside a tool call is not delivered: the harness aborts the turn, logs the prose to an operational channel, and posts a one-line "reply rejected" notice. A reply exists only once a tool posts it. If you write prose and no tool call, you have said nothing — and failed.
 
 ${renderNotes}
 

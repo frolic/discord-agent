@@ -22,8 +22,13 @@
  *   assistant prose, and silence would look like a hung agent);
  * - **agent_end** still closes anything left open;
  * - **stray text** — assistant prose in a mode where prose goes nowhere — is
- *   posted to the debug channel rather than dropped. Dropping it would make a
- *   model that forgot to call a tool look like it never answered.
+ *   **rejected**: the turn is aborted, the prose goes to the debug channel, and
+ *   the channel gets one short line saying the reply was not delivered. Logging
+ *   it and letting the turn continue was not enough: the model would happily
+ *   write a full reply that nobody saw, look successful, and only show up as a
+ *   💬 line in a channel the user isn't reading. Aborting makes the mistake
+ *   unmissable to both sides — the model's next turn sees the abort, and the
+ *   user sees that something was rejected instead of seeing silence.
  */
 import type { Client } from "discord.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
@@ -52,14 +57,31 @@ export function installStreamingSender(args: {
 }): void {
   const { session, sender, getReplyTarget, mode, client, channelId } = args;
 
-  /** Tools-mode prose that nobody will read unless we log it. */
-  async function postStrayText(text: string): Promise<void> {
+  // One rejection per run: after the abort, the remaining text blocks of the
+  // same run are consequences of the same mistake, not new ones.
+  let rejectedThisRun = false;
+
+  /** Tools-mode prose: log it, refuse the turn, tell the channel. */
+  async function rejectStrayText(text: string): Promise<void> {
     const body =
       text.length > strayTextLimit ? `${text.slice(0, strayTextLimit)}… (truncated)` : text;
     await postDebugLine({
       client,
-      content: `-# 💬 stray tools-mode text in <#${channelId}> — NOT delivered to the user\n${body}`,
+      content: `-# 💬 REJECTED tools-mode prose in <#${channelId}> — turn aborted, not delivered\n${body}`,
     });
+    if (rejectedThisRun) return;
+    rejectedThisRun = true;
+    await sender
+      .sendText({
+        text: `-# ⚠️ reply rejected — assistant prose is not delivered in this mode. Use \`send_message\`.`,
+      })
+      .catch((error) => console.error("[stream] reject notice failed:", error));
+    // Abort the run: the model answered in the wrong channel, so the turn has
+    // already failed. Letting it continue produces more undelivered prose and a
+    // transcript that looks like a successful reply.
+    await session
+      .abort()
+      .catch((error) => console.error("[stream] abort after stray text failed:", error));
   }
 
   let currentDispatcher: StreamingDispatcher | null = null;
@@ -94,6 +116,7 @@ export function installStreamingSender(args: {
   session.subscribe((event) => {
     if (event.type === "agent_start") {
       isFirstTextOfRun = true;
+      rejectedThisRun = false;
       return;
     }
     if (event.type === "agent_end") {
@@ -139,8 +162,8 @@ export function installStreamingSender(args: {
         // No text dispatcher in this mode: the streamed reply path is
         // `send_message`'s argument stream (createSendMessageDelivery.ts).
         if (ame.type === "text_end" && ame.content.trim().length > 0) {
-          void postStrayText(ame.content).catch((error) =>
-            console.error("[stream] stray-text log failed:", error),
+          void rejectStrayText(ame.content).catch((error) =>
+            console.error("[stream] stray-text rejection failed:", error),
           );
         }
         return;
