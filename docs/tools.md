@@ -53,16 +53,29 @@ explicit act rather than a side effect of generating tokens. The model's prose
 is no longer the delivery channel — it calls `send_message(text, in_reply_to?)`,
 corrects itself with `edit_message(message_id, text)`, and thinks out loud with
 `think(thought)`, which stays in the transcript and never reaches Discord. Text
-the model writes outside a tool call is cross-posted to `DEBUG_CHANNEL_ID` (so a
-model that forgot to call the tool is visible to an operator instead of silently
-saying nothing) and never reaches the user channel.
+the model writes outside a tool call is **rejected**: it is logged to
+`DEBUG_CHANNEL_ID`, the turn is aborted, and the channel gets one "reply
+rejected" line — a model that forgot to call the tool fails loudly instead of
+silently saying nothing. Prose that follows a reply the run already delivered
+("Sent.") is only logged, because aborting a turn the user already received
+helps nobody.
 
-Provider reasoning is switched off in `tools` mode (`session.setThinkingLevel("off")`)
-so `think` is the only reasoning outlet — otherwise the same work gets split
-between an invisible thinking block and an explicit tool. Some endpoints refuse
-to disable reasoning outright (OpenRouter answers HTTP 400
-`Reasoning is mandatory for this endpoint and cannot be disabled` for Gemini);
-set `CHAT_THINKING_LEVEL` to override, e.g. `CHAT_THINKING_LEVEL=high`.
+Provider reasoning stays at the configured default. It was originally forced
+`off` in this mode (theory: `think` is the only reasoning outlet worth paying
+for). **Measured, and the theory was wrong.** Six fixed prompts, same model, one
+thread per pass:
+
+- `off`: 3 of 6 replies delivered, 3 turns ended with the model writing "Sent."
+  as prose instead of calling `send_message`, 793 output tokens, 0 reasoning,
+  2.6s per LLM call.
+- `high`: 6 of 6 delivered, 1303 reasoning tokens, 2296 output, 6.6s per LLM
+  call, and visibly better answers (risk ranked by user impact, a latent-damage
+  caveat, tighter rewrites).
+
+Disabling reasoning cost half the replies. So the mode no longer has an opinion
+about reasoning depth; `CHAT_THINKING_LEVEL` remains for endpoints that refuse
+to disable reasoning outright (OpenRouter answers HTTP 400 `Reasoning is
+mandatory for this endpoint and cannot be disabled` for Gemini).
 
 ### The typing effect in `tools` mode
 
