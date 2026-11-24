@@ -472,6 +472,7 @@ export function createAgentPool(args: {
       mode: config.chatMode,
       client,
       channelId,
+      chatDelivery,
     });
     installActiveTracker({ channelId, session, tracker, mode: config.chatMode });
 

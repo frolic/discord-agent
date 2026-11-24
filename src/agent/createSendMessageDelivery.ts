@@ -66,6 +66,9 @@ export function createSendMessageDelivery(args: {
   let active: ActivePreview | null = null;
   // Only the first delivered message of a run carries the reply badge.
   let isFirstMessageOfRun = true;
+  // Whether anything reached the user during the current run — distinguishes a
+  // rejected reply from chatter after a successful one.
+  let deliveredThisRun = false;
 
   function defaultReplyTarget(): string | undefined {
     return isFirstMessageOfRun ? getReplyTarget() : undefined;
@@ -221,6 +224,15 @@ export function createSendMessageDelivery(args: {
   });
 
   return {
+    markDelivered(): void {
+      deliveredThisRun = true;
+    },
+    deliveredThisRun(): boolean {
+      return deliveredThisRun;
+    },
+    resetDelivered(): void {
+      deliveredThisRun = false;
+    },
     claimStreamed(toolCallId: string): Promise<StreamedDelivery | undefined> {
       const delivery = inFlightPreviews.get(toolCallId);
       // A claim happens exactly once per tool call; drop it so a long-lived warm

@@ -60,6 +60,7 @@ Thread under the message you are answering: pass its \`in_reply_to\`. The first 
 
       const streamed = await delivery.claimStreamed(toolCallId);
       if (streamed) {
+        delivery.markDelivered();
         return {
           content: [
             {
@@ -100,6 +101,7 @@ Thread under the message you are answering: pass its \`in_reply_to\`. The first 
           terminate: false,
         };
       }
+      delivery.markDelivered();
       return {
         content: [
           {

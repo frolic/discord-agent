@@ -36,6 +36,7 @@ import type { DiscordSender } from "../io/createDiscordSender.ts";
 import { postDebugLine } from "../io/postDebugLine.ts";
 import type { StreamingDispatcher } from "../streaming/createStreamingDispatcher.ts";
 import type { ChatMode } from "./chatMode.ts";
+import type { ChatDelivery } from "./chatDelivery.ts";
 
 /** How much stray prose reaches the log channel — the point is that it exists, not its full text. */
 const strayTextLimit = 1600;
@@ -54,20 +55,40 @@ export function installStreamingSender(args: {
   /** Only used to post stray tools-mode prose to the debug channel. */
   client: Client;
   channelId: string;
+  /**
+   * Tracks whether this run already delivered something. A model that calls
+   * `send_message` and then appends "Sent." has answered; aborting it would post
+   * a "reply rejected" notice for a reply the user is looking at.
+   */
+  chatDelivery: ChatDelivery | null;
 }): void {
-  const { session, sender, getReplyTarget, mode, client, channelId } = args;
+  const { session, sender, getReplyTarget, mode, client, channelId, chatDelivery } = args;
 
   // One rejection per run: after the abort, the remaining text blocks of the
   // same run are consequences of the same mistake, not new ones.
   let rejectedThisRun = false;
 
-  /** Tools-mode prose: log it, refuse the turn, tell the channel. */
-  async function rejectStrayText(text: string): Promise<void> {
+  /**
+   * Tools-mode prose. Two very different situations share one event stream:
+   *
+   * - nothing has been delivered this run → the model "replied" in a channel
+   *   that doesn't exist. Abort, log, tell the user something was refused.
+   * - something WAS delivered → the prose is trailing chatter ("Sent.", "Done.")
+   *   after a real reply. Log it; never abort a turn the user already got.
+   */
+  async function handleStrayText(text: string): Promise<void> {
     const body =
       text.length > strayTextLimit ? `${text.slice(0, strayTextLimit)}… (truncated)` : text;
+    if (chatDelivery?.deliveredThisRun() === true) {
+      await postDebugLine({
+        client,
+        content: `-# 💬 tools-mode chatter after delivery in <#${channelId}> — logged, not delivered\n${body}`,
+      });
+      return;
+    }
     await postDebugLine({
       client,
-      content: `-# 💬 REJECTED tools-mode prose in <#${channelId}> — turn aborted, not delivered\n${body}`,
+      content: `-# 💬 REJECTED tools-mode prose in <#${channelId}> — turn aborted, nothing was delivered\n${body}`,
     });
     if (rejectedThisRun) return;
     rejectedThisRun = true;
@@ -117,6 +138,7 @@ export function installStreamingSender(args: {
     if (event.type === "agent_start") {
       isFirstTextOfRun = true;
       rejectedThisRun = false;
+      chatDelivery?.resetDelivered();
       return;
     }
     if (event.type === "agent_end") {
@@ -162,8 +184,8 @@ export function installStreamingSender(args: {
         // No text dispatcher in this mode: the streamed reply path is
         // `send_message`'s argument stream (createSendMessageDelivery.ts).
         if (ame.type === "text_end" && ame.content.trim().length > 0) {
-          void rejectStrayText(ame.content).catch((error) =>
-            console.error("[stream] stray-text rejection failed:", error),
+          void handleStrayText(ame.content).catch((error) =>
+            console.error("[stream] stray-text handling failed:", error),
           );
         }
         return;

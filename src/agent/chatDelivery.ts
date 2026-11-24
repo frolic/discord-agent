@@ -23,6 +23,15 @@ export interface StreamedDelivery {
 
 export interface ChatDelivery {
   /**
+   * Note that this run put something in front of the user. Used to tell a
+   * *rejected* reply (nothing was delivered) from trailing chatter after a
+   * successful one ("Sent.", "Done.").
+   */
+  markDelivered(): void;
+  deliveredThisRun(): boolean;
+  /** Called at run start, so each turn answers the question for itself. */
+  resetDelivered(): void;
+  /**
    * Resolve what the streamer delivered for this tool call. Resolves
    * `undefined` when nothing was streamed, in which case the caller posts.
    */
