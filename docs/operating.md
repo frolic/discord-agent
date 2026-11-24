@@ -73,6 +73,8 @@ These env vars; everything else lives in `settings.json` (pi-native).
 | `DEBUG_CHANNEL_ID` | optional | Discord channel ID to cross-post operational logs (tool calls, per-call usage, compaction, lifecycle). Also where `CHAT_MODE=tools` sends assistant text the model wrote outside a tool call. |
 | `PI_CODING_AGENT_DIR` | optional | Override `agentDir` if cwd is awkward for your deployment. Default: cwd. |
 | `CHAT_MODE` | optional | `stream` (default) or `tools` — how replies reach Discord. Unknown values fail fast at startup rather than silently falling back. See [tools.md](tools.md#chat-modes-chat_mode). |
+| `BASH_CEILING_SECS` | optional | How long `bash` waits before handing a still-running command to the job runner. Default `110`. Under it, bash behaves like a normal blocking call; an explicit `timeout` parameter still kills. |
+| `TOOL_PROGRESS_NOTE_SECS` | optional | Seconds a single tool call may run before the harness posts its own `⏳ still running` note. Default `30`; `0` disables. |
 | `CHAT_THINKING_LEVEL` | optional | Override the provider thinking level asserted on every session (`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`). Default: `off` in `tools` mode, the `settings.json` default in `stream` mode. Needed for endpoints that refuse to disable reasoning. |
 
 **Recommended channel layout.** The agent is single-player — it

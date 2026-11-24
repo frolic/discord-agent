@@ -113,26 +113,48 @@ const thread = await parent.threads.create({
 channelId = thread.id;
 console.log(`thread: ${channelId}`);
 
-/** Post the steer as a real incoming message (webhook author, not the bot). */
+/**
+ * Post the steer as a real incoming message (webhook author, not the bot).
+ *
+ * The webhook has to live on the PARENT channel: threads do not expose
+ * `fetchWebhooks`, so creating it on the thread silently yields nothing — which
+ * is exactly how the first run "lost" its steer. `threadId` routes the message
+ * into the thread.
+ */
 async function postSteerMessage(content: string): Promise<Message | null> {
-  const channel = await client.channels.fetch(channelId);
-  if (!channel?.isTextBased() || !("fetchWebhooks" in channel)) return null;
-  const webhooks = await channel.fetchWebhooks();
-  const webhook = webhooks.find((candidate) => candidate.token !== undefined) ?? (await channel.createWebhook({ name: "async-proof" }));
-  if (!webhook.token) return null;
+  const host = await client.channels.fetch(parentChannelId);
+  if (!host?.isTextBased() || !("fetchWebhooks" in host)) {
+    console.error("steer: parent channel cannot host a webhook");
+    return null;
+  }
+  const webhooks = await host.fetchWebhooks();
+  const webhook =
+    webhooks.find((candidate) => candidate.token !== undefined) ??
+    (await host.createWebhook({ name: "async-proof" }));
+  if (!webhook.token) {
+    console.error("steer: webhook has no token");
+    return null;
+  }
   // discord.js sends webhooks with `wait=true`, so this resolves to the real
   // Message — which is what the pool needs in order to react and steer.
   return webhook.send({ content, username: "proof-steer", threadId: channelId });
 }
 
+// How the model is told to answer differs by mode: `tools` has send_message,
+// `stream` delivers assistant text. Same proof either way.
+const say = (what: string): string =>
+  config.chatMode === "tools"
+    ? `send_message containing exactly ${what}`
+    : `reply with text containing exactly ${what}`;
+
 const prompt = [
   `Long-work proof. Do exactly this, in order, without waiting for anything to finish:`,
   `1. job_start with name "${jobName}" and command "sleep ${jobSeconds}; echo ${jobMarker}".`,
-  `2. Immediately send_message containing exactly ${replyOneMarker} and one line saying the job is running in the background. Do not wait for the job.`,
+  `2. Immediately ${say(replyOneMarker)} plus one line saying the job is running in the background. Do not wait for the job.`,
   `3. job_status for "${jobName}" once.`,
-  `4. send_message containing exactly ${replyTwoMarker} and the job's state from step 3.`,
+  `4. ${say(replyTwoMarker)} plus the job's state from step 3.`,
   `5. Run bash with the command "sleep ${slowBashSeconds}; echo slow-done" — this is deliberately slow so the harness progress note has to fire.`,
-  `6. send_message saying the slow command finished.`,
+  `6. ${say("SLOW-DONE")} — the slow command finished.`,
   `Never poll the long job to completion and never kill it — the proof script cleans it up.`,
 ].join("\n");
 

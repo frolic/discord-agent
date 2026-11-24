@@ -145,10 +145,50 @@ assumption is a trusted home rather than a hostile sandbox.
 - **`think(thought)`** (`tools` mode) — reasoning outlet. Returns `ok`, logs a
   truncated preview to the journal, stays in the transcript for later turns, and
   is never posted.
+- **`bash(command, timeout?)`** — pi's shell tool, wrapped so it cannot hold the
+  turn hostage: the command runs as a detached job and the tool waits only up to
+  a ceiling (`BASH_CEILING_SECS`, default 110s). Finished inside the ceiling →
+  the output comes back exactly as before. Still running → the call returns a job
+  handle plus the tail so far, and the command keeps going. An explicit `timeout`
+  still means *kill* after N seconds.
+- **`job_start(name, command)`** — start a command detached from the first
+  moment. Use it when the work is already known to be long, so you can reply
+  without waiting at all.
+- **`job_status(name?)`** — running/finished with its exit code, plus a log tail;
+  omitting `name` lists every job. **`job_log(name, lines?)`** reads the log.
+  **`job_kill(name)`** sends SIGTERM to the job's process group.
 - **`restart_self(reason?)`** — exit the bot process so the supervisor
   (systemd, Docker, wrapper script) restarts with current source. Used
   after editing the framework, or as a recovery hatch. No-op if no
   supervisor is running.
+
+## Long work and progress notes
+
+Job state lives on disk: `<agent home>/jobs/<name>/{log,pid,meta.json}`. A job
+survives the tool call, the turn, and an agent restart, and is never auto-killed —
+a poll that sees no output is a question for the agent, not grounds to kill a
+build.
+
+Any single tool call that runs past `TOOL_PROGRESS_NOTE_SECS` (default 30s,
+`0` disables) makes the harness post its own line to the channel:
+
+```
+-# ⏳ `bash` still running · 45s
+```
+
+It is harness output, posted straight through the sender, so it works identically
+in both chat modes and cannot be swallowed by the model forgetting `send_message`.
+The interval doubles after each note and there is a cap per tool call.
+
+`src/bin/async-smoke.ts` is the live check for the whole story: in one real turn
+it starts a 150s job, replies while it runs, gets steered mid-turn (ack 👀,
+reply lands), and confirms the progress note fired. Run it against a parent
+channel — it creates its own private thread so it never races the live bot:
+
+```bash
+CHAT_MODE=tools TOOL_PROGRESS_NOTE_SECS=5 CHAT_SMOKE_CHANNEL_ID=<channel> \
+  bun /path/to/discord-agent/src/bin/async-smoke.ts
+```
 
 ## How streaming text reaches Discord
 

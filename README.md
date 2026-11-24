@@ -14,6 +14,33 @@ text straight into Discord, `tools` makes the reply a `send_message` tool call
 with `think` as the reasoning outlet. Both ship in the same binary — see
 [docs/tools.md](docs/tools.md#chat-modes-chat_mode).
 
+## Long work never blocks the conversation
+
+A turn must never become unreachable. The agent has to be able to answer while a
+build runs, and a message that arrives mid-turn has to get in. So anything slow
+runs detached:
+
+| Tool | What it does |
+|---|---|
+| `bash` | Same shell as ever — but a command still running after a ceiling (`BASH_CEILING_SECS`, default 110s) is handed to the background automatically. Below the ceiling it behaves exactly like a normal bash call. |
+| `job_start` | Start a command detached from the first moment, when you already expect it to be long. Returns immediately with a job handle. |
+| `job_status` / `job_log` / `job_kill` | Poll a job (state, exit code, log tail), read its log, stop it. |
+
+Jobs are directories under `<agent home>/jobs/<name>/` (`log`, `pid`,
+`meta.json`), so they survive the tool call, the turn, and an agent restart — a
+restarted process still sees what is running. Nothing is auto-killed: a job runs
+until it exits or someone kills it.
+
+Two more pieces keep the channel honest:
+
+- **Progress notes.** Any single tool call running past `TOOL_PROGRESS_NOTE_SECS`
+  (default 30s, `0` disables) makes the harness post its own `⏳ still running`
+  line, doubling the interval and bounded per call. Harness output, not model
+  output, so it works in both chat modes.
+- **Steering.** A message arriving mid-turn is injected between tool calls
+  (acked with 👀), so long work never makes the agent unreachable. Proven live in
+  both modes by `src/bin/async-smoke.ts`.
+
 ## Prerequisites
 
 - [Bun](https://bun.sh) ≥ 1.1 — runs the harness itself.
