@@ -65,7 +65,6 @@ import { installStreamingSender } from "./agent/installStreamingSender.ts";
 import { createSendMessageDelivery } from "./agent/createSendMessageDelivery.ts";
 import type { ChatDelivery } from "./agent/chatDelivery.ts";
 import { createJobs, type Jobs } from "./agent/jobs.ts";
-import { installProgressWatchdog } from "./agent/installProgressWatchdog.ts";
 import { createJobTools } from "./tools/job.ts";
 import { createBackgroundableBashTool } from "./tools/bash.ts";
 import { installActiveTracker } from "./active/installActiveTracker.ts";
@@ -475,14 +474,6 @@ export function createAgentPool(args: {
       channelId,
     });
     installActiveTracker({ channelId, session, tracker, mode: config.chatMode });
-    // The channel must never look dead while a tool runs — the watchdog posts a
-    // note (harness-authored, so it works in both modes) once a tool passes the
-    // first threshold.
-    installProgressWatchdog({
-      session,
-      sender,
-      options: { firstNoteSeconds: config.progressNoteSecs },
-    });
 
     entries.set(channelId, entry);
     evict();

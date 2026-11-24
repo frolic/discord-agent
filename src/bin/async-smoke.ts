@@ -8,8 +8,8 @@
  *   2. the agent **replies while it runs** (no waiting for the job),
  *   3. a **steer lands mid-turn** (a second message while the agent is busy is
  *      injected between tool calls and produces its own reply),
- *   4. the **harness posts progress notes on its own** while a tool runs long
- *      (`TOOL_PROGRESS_NOTE_SECS`), so the channel never shows a silent stall.
+ *   4. the **typing indicator never lapses** while that tool runs, and no status
+ *      lines are posted — the channel shows work in progress, not chatter.
  *
  * Everything is driven through the real pool, the real tools and the real
  * gateway; the script only observes. It creates its own private thread so it
@@ -17,7 +17,7 @@
  *
  * Usage, from the agent home:
  *
- *   CHAT_MODE=tools CHAT_SMOKE_CHANNEL_ID=<parent channel> TOOL_PROGRESS_NOTE_SECS=5 \
+ *   CHAT_MODE=tools CHAT_SMOKE_CHANNEL_ID=<parent channel> \
  *     bun /path/to/discord-agent/src/bin/async-smoke.ts
  *
  * Exit code 0 means every assertion held.
@@ -33,7 +33,7 @@ const turnTimeoutMs = 300_000;
 const settleMs = 6_000;
 /** How long the proof job runs — long enough to outlive the turn comfortably. */
 const jobSeconds = 150;
-/** A bash call inside the turn that outlives TOOL_PROGRESS_NOTE_SECS. */
+/** A bash call inside the turn, long enough that the typing indicator has to re-pulse. */
 const slowBashSeconds = 14;
 
 const jobName = "async-smoke";
@@ -112,6 +112,16 @@ const thread = await parent.threads.create({
 });
 channelId = thread.id;
 console.log(`thread: ${channelId}`);
+
+// Count typing pulses instead of relying on gateway TYPING_START events, which
+// are not guaranteed for a bot's own `sendTyping`. The pool fetches the channel
+// from the client cache, so this instance is the one the indicator calls.
+const typingPulses: number[] = [];
+const realSendTyping = thread.sendTyping.bind(thread);
+thread.sendTyping = async () => {
+  typingPulses.push(Date.now());
+  return realSendTyping();
+};
 
 /**
  * Post the steer as a real incoming message (webhook author, not the bot).
@@ -214,6 +224,11 @@ for (const observation of observations) {
 if (turnError) console.log(`turn error: ${String(turnError)}`);
 
 const firstReply = observations.find((observation) => observation.content.includes(replyOneMarker));
+// The slow command runs between the second reply and the SLOW-DONE reply.
+const secondReply = observations.find((observation) => observation.content.includes(replyTwoMarker));
+const slowDoneReply = observations.find((observation) => observation.content.includes("SLOW-DONE"));
+const slowBashStart = secondReply?.at ?? null;
+const slowBashEnd = slowDoneReply?.at ?? null;
 const steerReply = observations.find(
   (observation) => observation.content.includes(steerMarker) && observation.kind === "create",
 );
@@ -255,10 +270,21 @@ check(
   steerReply ? `+${steerReply.at - steerPostedAt}ms after the steer` : undefined,
 );
 check("the steer message was acked with 👀", steerAcked);
+// The channel must not look dead while a tool runs — the typing indicator is
+// what carries that now, so prove it stayed lit through the slow command.
+const bashWindowEnd = slowBashEnd ?? turnFinishedAt;
+const pulsesDuringBash = typingPulses.filter(
+  (at) => slowBashStart !== null && at >= slowBashStart && at <= bashWindowEnd,
+);
 check(
-  "the harness posted a progress note on its own",
-  progressNotes.length > 0,
-  `${progressNotes.length} note(s)`,
+  "the typing indicator pulsed while a tool was running",
+  pulsesDuringBash.length >= 2,
+  `${pulsesDuringBash.length} pulse(s) during the slow command`,
+);
+check(
+  "no progress-note spam was posted",
+  progressNotes.length === 0,
+  progressNotes.length > 0 ? `${progressNotes.length} note(s)` : undefined,
 );
 
 client.destroy();

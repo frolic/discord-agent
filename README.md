@@ -33,10 +33,10 @@ until it exits or someone kills it.
 
 Two more pieces keep the channel honest:
 
-- **Progress notes.** Any single tool call running past `TOOL_PROGRESS_NOTE_SECS`
-  (default 30s, `0` disables) makes the harness post its own `⏳ still running`
-  line, doubling the interval and bounded per call. Harness output, not model
-  output, so it works in both chat modes.
+- **The typing indicator spans the whole run**, tool calls included: it starts on
+  `turn_start`, re-pulses every 7s inside Discord's ~10s fade, and only clears on
+  `agent_end`. A ten-minute build looks like work in progress, with no status
+  lines to read. (`src/io/installTypingIndicator.ts`)
 - **Steering.** A message arriving mid-turn is injected between tool calls
   (acked with 👀), so long work never makes the agent unreachable. Proven live in
   both modes by `src/bin/async-smoke.ts`.

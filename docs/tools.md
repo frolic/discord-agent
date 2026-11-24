@@ -169,24 +169,20 @@ survives the tool call, the turn, and an agent restart, and is never auto-killed
 a poll that sees no output is a question for the agent, not grounds to kill a
 build.
 
-Any single tool call that runs past `TOOL_PROGRESS_NOTE_SECS` (default 30s,
-`0` disables) makes the harness post its own line to the channel:
-
-```
--# ⏳ `bash` still running · 45s
-```
-
-It is harness output, posted straight through the sender, so it works identically
-in both chat modes and cannot be swallowed by the model forgetting `send_message`.
-The interval doubles after each note and there is a cap per tool call.
+Silence while a tool runs is covered by the **typing indicator**, not by status
+messages: it is set on `turn_start`, re-pulsed every 7 seconds (inside Discord's
+~10 second fade), and cleared only at `agent_end`. A tool call that takes minutes,
+a compaction, and a job being polled across turns all show the same thing — the
+agent is working — with nothing extra posted to the channel.
 
 `src/bin/async-smoke.ts` is the live check for the whole story: in one real turn
 it starts a 150s job, replies while it runs, gets steered mid-turn (ack 👀,
-reply lands), and confirms the progress note fired. Run it against a parent
+reply lands), and confirms the typing indicator kept pulsing through a slow
+command without posting any status lines. Run it against a parent
 channel — it creates its own private thread so it never races the live bot:
 
 ```bash
-CHAT_MODE=tools TOOL_PROGRESS_NOTE_SECS=5 CHAT_SMOKE_CHANNEL_ID=<channel> \
+CHAT_MODE=tools CHAT_SMOKE_CHANNEL_ID=<channel> \
   bun /path/to/discord-agent/src/bin/async-smoke.ts
 ```
 

@@ -69,9 +69,6 @@ export const config = {
   // runner. Under this, a command behaves exactly like a blocking bash call;
   // past it, the turn is freed and the model polls the job. Unset → 110s.
   bashCeilingSecs: positiveSeconds("BASH_CEILING_SECS", 110),
-  // How long a single tool call may run before the harness posts its own
-  // progress note to the channel. `0` disables the watchdog. Unset → 30s.
-  progressNoteSecs: positiveSeconds("TOOL_PROGRESS_NOTE_SECS", 30),
   // Harness checkout root. Its git SHA is stamped into the ready marker so
   // the supervisor can tell whether a revert to `known-good` would actually
   // change anything.
