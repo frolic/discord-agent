@@ -6,8 +6,8 @@
  * wires three I/O subsystems on top of a fresh agent session:
  *
  * - `DiscordSender` — the bot's outbound user-channel writes: streamed
- *   text dispatchers, file attachments via the `attach` tool, error
- *   surfacing.
+ *   text dispatchers, file attachments via the `attach` tool, finished
+ *   `send_message` payloads, error surfacing.
  * - `DebugLogger` — operational logging in the debug channel; pure
  *   subscriber to session events (`tool_execution_start/end`,
  *   `message_end`, `compaction_start/end`). Posts start, failure,
@@ -21,6 +21,16 @@
  * streaming-sender install (`installStreamingSender`) routes assistant
  * text deltas into the sender and surfaces errors that fall outside the
  * normal tool path.
+ *
+ * `CHAT_MODE` decides which delivery path exists (see `agent/chatMode.ts`):
+ *
+ * - `stream` — assistant text deltas stream into Discord; the reply IS the text.
+ * - `tools` — assistant text is not delivered at all; `send_message` posts the
+ *   reply, `think` holds the reasoning, and the same typing effect comes from
+ *   previewing the `send_message` argument stream
+ *   (`createSendMessageDelivery`). Provider reasoning is switched off so `think`
+ *   is the only reasoning outlet — thinking tokens and a reasoning tool would
+ *   otherwise be two competing channels for the same job.
  */
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -28,7 +38,6 @@ import type { Client, Message } from "discord.js";
 import {
   createAgentSessionFromServices,
   createAgentSessionServices,
-  createBashToolDefinition,
   createEditToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
@@ -45,11 +54,20 @@ import { createReactTool } from "./tools/react.ts";
 import { createHistoryTool } from "./tools/history.ts";
 import { createThreadTool } from "./tools/thread.ts";
 import { createRestartSelfTool } from "./tools/restartSelf.ts";
+import { createSendMessageTool } from "./tools/sendMessage.ts";
+import { createEditMessageTool } from "./tools/editMessage.ts";
+import { createThinkTool } from "./tools/think.ts";
 import { collectImageAttachments } from "./collectImageAttachments.ts";
 import { formatMessage } from "./formatMessage.ts";
 import { buildPromptOptions } from "./agent/buildPromptOptions.ts";
-import { harnessRules } from "./agent/prompts.ts";
+import { withDeliveryHint } from "./agent/deliveryHint.ts";
+import { buildHarnessRules } from "./agent/prompts.ts";
 import { installStreamingSender } from "./agent/installStreamingSender.ts";
+import { createSendMessageDelivery } from "./agent/createSendMessageDelivery.ts";
+import type { ChatDelivery } from "./agent/chatDelivery.ts";
+import { createJobs, type Jobs } from "./agent/jobs.ts";
+import { createJobTools } from "./tools/job.ts";
+import { createBackgroundableBashTool } from "./tools/bash.ts";
 import { installActiveTracker } from "./active/installActiveTracker.ts";
 import type { ActiveTracker } from "./active/createActiveTracker.ts";
 
@@ -112,19 +130,78 @@ function buildTools(args: {
   sender: DiscordSender;
   tracker: ActiveTracker;
   wakeUp: (channelId: string, prompt: string) => Promise<void>;
+  /**
+   * Present only in `CHAT_MODE=tools`: the hand-off `send_message` claims its
+   * already-streamed reply from.
+   */
+  chatDelivery: ChatDelivery | null;
+  jobs: Jobs;
 }): ToolDefinition[] {
-  const { client, channelId, workspaceDir, sender, tracker, wakeUp } = args;
+  const { client, channelId, workspaceDir, sender, tracker, wakeUp, chatDelivery, jobs } = args;
   return [
-    createBashToolDefinition(workspaceDir),
+    // pi's bash, wrapped so a long command hands itself to the job runner
+    // instead of holding the turn (and the channel) hostage.
+    createBackgroundableBashTool({
+      workspaceDir,
+      jobs,
+      ceilingSeconds: config.bashCeilingSecs,
+    }),
+    ...createJobTools({ jobs, workspaceDir }),
     createReadToolDefinition(workspaceDir),
     createWriteToolDefinition(workspaceDir),
     createEditToolDefinition(workspaceDir),
-    createAttachTool({ sender }),
-    createReactTool({ client, channelId }),
+    createAttachTool({ sender, mode: config.chatMode }),
+    createReactTool({ client, channelId, mode: config.chatMode }),
     createHistoryTool({ client, channelId }),
     createThreadTool({ client, channelId, wakeUp }),
     createRestartSelfTool({ client, channelId, tracker }),
+    // The reply path in `tools` mode — there is no equivalent in `stream` mode,
+    // where assistant text is the reply.
+    ...(chatDelivery
+      ? [
+          createSendMessageTool({ sender, delivery: chatDelivery }),
+          createEditMessageTool({ client, channelId, sender }),
+          createThinkTool({ channelId }),
+        ]
+      : []),
   ] as unknown as ToolDefinition[];
+}
+
+/**
+ * Assert this mode's thinking level on every session acquisition.
+ *
+ * `tools` mode turns provider reasoning **off** (`session.setThinkingLevel`
+ * clamps to what the model supports): the whole point of the mode is that the
+ * `think` tool is the single, inspectable reasoning outlet. Leaving reasoning on
+ * gives two competing outlets — invisible thinking tokens *and* `think` — and the
+ * model splits the same job between them.
+ *
+ * `CHAT_THINKING_LEVEL` overrides both modes. It exists because reasoning-off is
+ * not universally available: some endpoints reject it outright
+ * ("Reasoning is mandatory for this endpoint and cannot be disabled"), and that
+ * has to be fixable with an env change rather than a code change.
+ *
+ * `stream` mode asserts the configured default explicitly instead of relying on
+ * the session file. pi persists a `thinking_level_change` entry, so a session
+ * last used in `tools` mode would otherwise come back with reasoning off and
+ * silently lose its reasoning in stream mode too — a mode switch has to be
+ * symmetric, not a one-way trip.
+ *
+ * `setThinkingLevel` only writes a session entry when the level actually changes,
+ * so the steady state costs nothing.
+ */
+function applyChatModeThinkingLevel(
+  session: AgentSession,
+  settingsDefault: Parameters<AgentSession["setThinkingLevel"]>[0] | undefined,
+): void {
+  if (config.chatThinkingLevel) {
+    session.setThinkingLevel(config.chatThinkingLevel);
+    return;
+  }
+  // Both modes: the configured default. `tools` mode used to force `off`; an A/B
+  // showed that cost replies (see `agent/chatMode.ts`), so the mode no longer
+  // has an opinion about reasoning depth.
+  if (settingsDefault) session.setThinkingLevel(settingsDefault);
 }
 
 export interface AgentPool {
@@ -221,6 +298,9 @@ export function createAgentPool(args: {
 }): AgentPool {
   const { client, tracker } = args;
   const entries = new Map<string, PoolEntry>();
+  // One job registry for the whole process: jobs are not per-channel, and a job
+  // started while answering in one channel must be pollable from another.
+  const jobs = createJobs({ rootDir: resolve(config.agentDir, "jobs") });
   // Track the last value we pushed to Discord presence so we only call
   // `setActivity` when the resolved model actually changes (re-setting the
   // same string would still hit Discord's gateway). Pi resolves the model
@@ -292,6 +372,20 @@ export function createAgentPool(args: {
       },
       getContextUsage: () => sessionRef?.getContextUsage() ?? null,
     });
+    // Tools-mode reply path. Constructed before the session (the tool array is
+    // an argument to session creation) and wired to it afterwards — the same
+    // deferred-subscription shape the debug logger uses.
+    let attachDeliveryToSession: (session: AgentSession) => void = () => {};
+    const chatDelivery =
+      config.chatMode === "tools"
+        ? createSendMessageDelivery({
+            sender,
+            getReplyTarget: () => entries.get(channelId)?.replyTarget,
+            subscribe: (handler) => {
+              attachDeliveryToSession = (session) => session.subscribe(handler);
+            },
+          })
+        : null;
     const sessionManager = SessionManager.open(sessionPath, undefined, workspaceDir);
 
     // Pi's services helper builds AuthStorage, ModelRegistry,
@@ -303,12 +397,15 @@ export function createAgentPool(args: {
     // We inject harnessRules + sourceHint as the append-system-prompt so
     // the harness layer always lands at the end regardless of what the
     // user's SYSTEM.md says.
+    const harnessRules = buildHarnessRules(config.chatMode);
     const services = await createAgentSessionServices({
       cwd: workspaceDir,
       agentDir: config.agentDir,
       resourceLoaderOptions: {
         additionalSkillPaths: [resolve(config.agentDir, "skills")],
-        appendSystemPrompt: sourceHint ? [harnessRules, sourceHint] : [harnessRules],
+        appendSystemPrompt: sourceHint
+        ? [harnessRules, sourceHint]
+        : [harnessRules],
       },
     });
 
@@ -340,12 +437,23 @@ export function createAgentPool(args: {
       // not per-tool wrapping — so the customTools list passes through
       // unwrapped.
       noTools: "builtin",
-      customTools: buildTools({ client, channelId, workspaceDir, sender, tracker, wakeUp }),
+      customTools: buildTools({
+        jobs,
+        client,
+        channelId,
+        workspaceDir,
+        sender,
+        tracker,
+        wakeUp,
+        chatDelivery,
+      }),
     });
 
     // Wire the deferred bindings now that the session exists.
     sessionRef = session;
     attachLoggerToSession(session);
+    attachDeliveryToSession(session);
+    applyChatModeThinkingLevel(session, services.settingsManager.getDefaultThinkingLevel());
     installTypingIndicator({ client, channelId, session });
     updateBotPresence(session);
 
@@ -361,8 +469,12 @@ export function createAgentPool(args: {
       session,
       sender,
       getReplyTarget: () => entry.replyTarget,
+      mode: config.chatMode,
+      client,
+      channelId,
+      chatDelivery,
     });
-    installActiveTracker({ channelId, session, tracker });
+    installActiveTracker({ channelId, session, tracker, mode: config.chatMode });
 
     entries.set(channelId, entry);
     evict();
@@ -400,7 +512,13 @@ export function createAgentPool(args: {
     // time the pool handles messages — login completes before the router
     // wires up — so a missing `client.user` here is a bug worth crashing on.
     if (!client.user) throw new Error("client.user not set — login did not complete");
-    const formattedPrompt = formatMessage(message, client.user.id);
+    // The delivery rule rides along with every inbound message: by the time a
+    // long session is deep in, the system prompt rule is far away and the newest
+    // message is right here.
+    const formattedPrompt = withDeliveryHint(
+      formatMessage(message, client.user.id),
+      config.chatMode,
+    );
 
     if (isBusy) {
       // Steering: a turn is in flight → inject this as a steer. Ack with

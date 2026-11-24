@@ -17,14 +17,19 @@
 import type { Client } from "discord.js";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { ChatMode } from "../agent/chatMode.ts";
 
-export function createReactTool(args: { client: Client; channelId: string }) {
-  const { client, channelId } = args;
+export function createReactTool(args: { client: Client; channelId: string; mode: ChatMode }) {
+  const { client, channelId, mode } = args;
+  const insteadOfWords =
+    mode === "tools"
+      ? "Once the acknowledgement is sent as a reaction there is nothing to put in `send_message`, and a `send_message` saying the same thing would double up."
+      : "Plain text replies stream automatically; reach for this tool when an emoji is sufficient and words aren't needed.";
   return defineTool({
     name: "react",
     label: "react",
     description:
-      "Toggle an emoji reaction on a specific message in the current channel/thread. If you've already reacted with this emoji, the reaction is removed; otherwise it's added. Use this for messages that need only a one-character acknowledgment (e.g., user says 'thanks' → react 👍), or to retract a reaction you placed earlier by calling again with the same emoji. Plain text replies stream automatically; reach for this tool when an emoji is sufficient and words aren't needed. The target message ID comes from the `message_id=…` field of every message you see (wake prompt and `history` tool output).",
+      `Toggle an emoji reaction on a specific message in the current channel/thread. If you've already reacted with this emoji, the reaction is removed; otherwise it's added. Use this for messages that need only a one-character acknowledgment (e.g., user says 'thanks' → react 👍), or to retract a reaction you placed earlier by calling again with the same emoji. ${insteadOfWords} The target message ID comes from the \`message_id=…\` field of every message you see (wake prompt and \`history\` tool output).`,
     parameters: Type.Object({
       emoji: Type.String({
         description: "Unicode emoji (e.g. 👍, ✅, ❤️) or :name: for custom server emojis",

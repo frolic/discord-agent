@@ -10,7 +10,11 @@ interface EditCall {
   messageId: string;
   content: string;
 }
-type Call = PostCall | EditCall;
+interface DeleteCall {
+  type: "delete";
+  messageId: string;
+}
+type Call = PostCall | EditCall | DeleteCall;
 
 interface Recorder {
   calls: Call[];
@@ -81,6 +85,9 @@ function makeDispatcher(args: { hardLimit?: number; recorder?: Recorder } = {}) 
       const idx = recorder.editCount++;
       recorder.calls.push({ type: "edit", messageId, content });
       if (recorder.editFails.has(idx)) throw new Error("simulated edit fail");
+    },
+    deleteMessage: async (messageId) => {
+      recorder.calls.push({ type: "delete", messageId });
     },
   });
   return { dispatcher, recorder, control };
@@ -338,5 +345,68 @@ describe("createStreamingDispatcher — table chunking with header repeat", () =
       // Stays under hardLimit.
       expect(p.content.length).toBeLessThanOrEqual(150);
     }
+  });
+});
+
+describe("createStreamingDispatcher — replaceSource", () => {
+  test("replaces the preview with the authoritative text in the same messages", async () => {
+    const { dispatcher, recorder, control } = makeDispatcher();
+    dispatcher.append("part one");
+    await settle(control);
+    expect(recorder.calls).toEqual([{ type: "post", content: "part one" }]);
+
+    dispatcher.replaceSource("part one, now complete");
+    const endPromise = dispatcher.end();
+    await settle(control);
+    await endPromise;
+
+    expect(recorder.calls).toEqual([
+      { type: "post", content: "part one" },
+      { type: "edit", messageId: "m1", content: "part one, now complete" },
+    ]);
+    // Exactly one live message — the preview is not followed by a duplicate.
+    expect(dispatcher.getPostedMessageIds()).toEqual(["m1"]);
+  });
+
+  test("a replacement identical to the preview causes no extra traffic", async () => {
+    const { dispatcher, recorder, control } = makeDispatcher();
+    dispatcher.append("same text");
+    await settle(control);
+    const callsBefore = recorder.calls.length;
+    dispatcher.replaceSource("same text");
+    await dispatcher.end();
+    await settle(control);
+    expect(recorder.calls.length).toBe(callsBefore);
+  });
+
+  test("a replacement that needs fewer messages deletes the leftovers", async () => {
+    const { dispatcher, recorder, control } = makeDispatcher({ hardLimit: 12 });
+    dispatcher.append("aaaa\n\nbbbb\n\ncccc\n\ndddd");
+    await settle(control);
+    const posted = recorder.calls.filter((c): c is PostCall => c.type === "post");
+    expect(posted.length).toBeGreaterThan(1);
+
+    // Shrink the source to a single chunk: the surplus messages must go, or the
+    // delivered reply keeps a stale fragment of the preview.
+    dispatcher.replaceSource("short");
+    await dispatcher.end();
+    await settle(control);
+
+    const deletes = recorder.calls.filter((c): c is DeleteCall => c.type === "delete");
+    expect(deletes.length).toBe(posted.length - 1);
+    expect(dispatcher.getPostedMessageIds()).toEqual(["m1"]);
+    const lastContent = recorder.calls
+      .filter((c): c is EditCall | PostCall => c.type === "edit" || c.type === "post")
+      .at(-1);
+    expect(lastContent?.content).toBe("short");
+  });
+
+  test("replaceSource on a dispatcher that never posted anything just arms the flush", async () => {
+    const { dispatcher, recorder, control } = makeDispatcher();
+    dispatcher.replaceSource("straight to the point");
+    const endPromise = dispatcher.end();
+    await settle(control);
+    await endPromise;
+    expect(recorder.calls).toEqual([{ type: "post", content: "straight to the point" }]);
   });
 });

@@ -1,6 +1,13 @@
 /**
- * Standalone prompt strings used by the harness's resource-loader wiring.
+ * Prompt strings used by the harness's resource-loader wiring, mode-aware.
+ *
  * Lifted out of the wiring files so the prose doesn't drown the logic.
+ *
+ * Two chat modes share one structure (`CHAT_MODE`, see `agent/chatMode.ts`): the
+ * rendering notes, the inbound message format, the user commands and the
+ * workspace note are identical, and only the delivery section differs. Keeping
+ * the shared prose in one place is what stops the modes from drifting into
+ * subtly different descriptions of the same message format.
  *
  * Convention: multi-step prompts use **ordered procedural framing** —
  * "do X BEFORE Y" rather than "fold X into Y" — because LLMs follow
@@ -8,10 +15,10 @@
  * `docs/persona.md` ("Writing multi-step prompts: order them") for the
  * worked example that drove the convention.
  */
+import type { ChatMode } from "./chatMode.ts";
 
-export const harnessRules = `# Discord delivery (harness layer)
-
-Text reaches the user via Discord. The harness handles Discord-specific rendering (tables, task lists, images, HTML), splits long replies into multiple messages at safe block boundaries, and auto-closes unfinished inline marks during the live stream.
+/** Discord markdown nits that apply whichever way the reply is delivered. */
+const renderNotes = `The harness handles Discord-specific rendering (tables, task lists, images, HTML), splits long replies into multiple messages at safe block boundaries, and auto-closes unfinished inline marks during the live stream.
 
 Two practical nudges:
 - Small tables render well. For prose-heavy or wide content, prefer lists or paragraph shapes — Discord's code-block render width is narrow on mobile and wide tables wrap awkwardly there.
@@ -21,27 +28,17 @@ The one Discord-specific syntax to know is the entity references (these aren't m
 
 - \`<@USER_ID>\` — mention a user. The user_id comes from the \`user_id=…\` field on every message you receive.
 - \`<#CHANNEL_ID>\` — link to a channel.
-- \`<:name:id>\` — custom server emoji.
+- \`<:name:id>\` — custom server emoji.`;
 
-Tools available for non-text actions:
-- \`attach\` — post a message with file attachments (images, documents, generated artifacts). Use for files only; long prose still goes through the text stream. Optional short caption is allowed.
-- \`react\` — toggle an emoji reaction on a specific message. Use for one-character acknowledgments (user says "thanks" → react 👍) or to retract a reaction you placed earlier.
-- \`thread\` — create a Discord thread for multi-step or long-running work. Hands off to a fresh session in the new thread.
-
-**Tools are actions, not topics.** Writing the word "Reacted." or "Attaching the file…" or "Creating a thread now" does NOT actually react / attach / create a thread — it just posts that literal text. To react, you MUST call the \`react\` tool. To attach, you MUST call \`attach\`. To create a thread, you MUST call \`thread\`. Conversely, calling the tool AND writing text describing the same action double-posts (the user sees both the action AND the redundant prose). One or the other:
-- Casual ack where an emoji is the right reply → call \`react\`, no text.
-- Substantive reply → write the prose, don't call \`react\`.
-- Files to share → call \`attach\` (with optional short caption); long context goes in the surrounding text stream.
-
-Replies thread under the message that woke you automatically — no need to specify a target for the common case.
-
-User commands handled by the harness (don't react to them as user requests):
+/** Commands the harness answers itself, in both modes. */
+const userCommands = `User commands handled by the harness (don't react to them as user requests):
 - \`!stop\` — harness aborts the current run.
 - \`!compact\` — harness triggers context compaction on the current session. Older messages are summarized into a single "compaction" entry, freeing context budget. The harness reacts 🗜️ as the ack.
 - \`!clear\` — harness wipes the session and starts fresh.
-- \`!restart\` — harness exits the process; supervisor restarts. (You can also call \`restart_self\` to do this yourself after editing your own source. \`restart_self\` automatically reacts 🔄 to the user's message as the ack — do NOT send a separate confirmation message before calling it.)
+- \`!restart\` — harness exits the process; supervisor restarts. (You can also call \`restart_self\` to do this yourself after editing your own source. \`restart_self\` automatically reacts 🔄 to the user's message as the ack — do NOT send a separate confirmation message before calling it.)`;
 
-# Inbound message format
+/** Message shape + workspace note, in both modes. */
+const inboundFormat = `# Inbound message format
 
 Every Discord message you see — both the wake prompt and \`history\` lines — has the shape:
 
@@ -56,13 +53,93 @@ Field order goes most-stable to least-stable (user_id → message_id → created
 - \`user_id\`    → use in \`<@user_id>\` to @-mention that user in your reply.
 - \`message_id\` → pass to \`react.message_id\` or \`attach.in_reply_to\`.
 - \`created_at\` → when the message was originally sent.
-- \`edited_at\`  → when the user last edited the message. Present iff the message has been edited. If you see two lines with the same \`message_id\` and the second has \`edited_at\` set, the user revised that message — treat the latest version as canonical and adjust any in-flight or just-finished reply if the edit changes their intent. This is how the harness surfaces user steering on a live turn.
+- \`edited_at\`  → when the user last edited the message. Present iff the message has been edited. If you see two lines with the same \`message_id\` and the second has \`edited_at\` set, the user revised the message — treat the latest version as canonical and adjust any in-flight or just-finished reply if the edit changes their intent. This is how the harness surfaces user steering on a live turn.
 - \`in_reply_to\`→ the \`message_id\` this message threads under (Discord-level reply). To see the target: first scan earlier turns in your session for that \`message_id\`. If it's not in session history, call \`history(id=<id>)\` to fetch just that one message.
 - \`bot=true\`   → author is a bot account; might be a different bot in the channel.
 - \`self=true\`  → that line is your own past reply. Don't treat it as user input.
 - \`attachments=<n>\` → that many files came with the message. **Images** are passed natively as visible image content in your context (you can already "see" them — no URL line needed). **Non-image attachments** (PDFs, text files, archives, etc.) appear on \`attachment[<i>] (<mime>): <url>\` lines beneath the message; \`bash curl\` the URL when you need the file content. In \`history\` tool output, image URLs are *also* included on those lines — past messages aren't re-injected with their image bytes, so the URL is the only way to reach earlier images.
 
 The cwd is a private workspace directory for this conversation; created files persist across messages in this scope.`;
+
+/**
+ * Long work, both modes. The rule it encodes: a turn must never be *unreachable*
+ * — the user can always get a word in, and silence while a tool runs is the
+ * harness's problem to fix, not the model's.
+ */
+const longWorkRules = `## Long work
+
+Never let a long command hold the conversation. Anything that may run for minutes — builds, installs, test suites, deploys, big fetches, log scans — goes through \`job_start\` (detached from the first moment) rather than \`bash\`. A \`bash\` call that runs past its ceiling hands itself off to the background automatically and returns a job handle, so the turn is never stuck on it either way.
+
+While a job runs: reply first, then poll. \`job_status\` / \`job_log\` every 15-30 seconds; no output change across two polls means read the log and decide, and \`job_kill\` is for genuinely stuck work or an explicit request, never for "it's slow". The user can reach you during all of this — a message that arrives mid-turn is steered in between tool calls, so answer it even if the job is unfinished.`;
+
+/**
+ * `stream` mode: the reply IS the assistant text.
+ */
+const streamHarnessRules = `# Discord delivery (harness layer)
+
+Text reaches the user via Discord. ${renderNotes}
+
+Tools available for non-text actions:
+- \`attach\` — post a message with file attachments (images, documents, generated artifacts). Use for files only; long prose still goes through the text stream. Optional short caption is allowed.
+- \`react\` — toggle an emoji reaction on a specific message. Use for one-character acknowledgments (user says "thanks" → react 👍) or to retract a reaction you placed earlier.
+- \`thread\` — create a Discord thread for multi-step or long-running work. Hands off to a fresh session in the new thread.
+
+**Tools are actions, not topics.** Writing the word "Reacted." or "Attaching the file…" or "Creating a thread now" does NOT actually react / attach / create a thread — it just posts that literal text. To react, you MUST call the \`react\` tool. To attach, you MUST call \`attach\`. To create a thread, you MUST call \`thread\`. Conversely, calling the tool AND writing text describing the same action double-posts (the user sees both the action AND the redundant prose). One or the other:
+- Casual ack where an emoji is the right reply → call \`react\`, no text.
+- Substantive reply → write the prose, don't call \`react\`.
+- Files to share → call \`attach\` (with optional short caption); long context goes in the surrounding text stream.
+
+Replies thread under the message that woke you automatically — no need to specify a target for the common case.
+
+${longWorkRules}
+
+${userCommands}
+
+${inboundFormat}`;
+
+/**
+ * `tools` mode: the reply is a tool call, and assistant text is discarded.
+ *
+ * Written as hard rules rather than suggestions because the failure mode is
+ * silent — prose written outside a tool call never reaches the user, so the
+ * agent "replies" and hears nothing back. Every line here exists to make that
+ * impossible to do by accident.
+ */
+const toolsHarnessRules = `# Discord delivery (harness layer)
+
+**Assistant text does not reach the user, and writing it is a rejected turn.** Anything you write outside a tool call is not delivered: the harness aborts the turn, logs the prose to an operational channel, and posts a one-line "reply rejected" notice. A reply exists only once a tool posts it. If you write prose and no tool call, you have said nothing — and failed.
+
+${renderNotes}
+
+## Replying
+
+- \`send_message\` — **the reply.** Everything the user reads goes here. Write the whole thing in one call: long text is split across several Discord messages automatically at markdown-safe boundaries, so do not pre-split it yourself.
+- \`edit_message\` — replace the full content of a message you already posted, when you got something wrong. Correct in place instead of posting a correction as a new message.
+- \`think\` — your reasoning outlet. Planning, checking a fact, deciding what to send. Never delivered, but it stays in the conversation, so it is the right place for working-out you will need later in the turn.
+
+Use \`think\` for the work and \`send_message\` for the result: think → check → send. Do not narrate in \`send_message\` what you are about to do next ("Let me check…") — the user already sees the tool activity, so say it once, when you know.
+
+**Once \`send_message\` has run, the message exists.** Do not write the reply again as prose afterwards — not a restatement, not a reworded second draft, not "Sent.". That text is not a message; the harness logs it as chatter and the user never sees it. After sending, the turn is done: stop writing and end the turn.
+
+## Other tools
+
+- \`attach\` — post a message with file attachments. Prose still goes through \`send_message\`; \`attach\` is for the file itself, with at most a short caption.
+- \`react\` — toggle an emoji reaction on a specific message. The right reply to "thanks" or "nice" is \`react\` alone, not a \`send_message\` saying so.
+- \`thread\` — create a Discord thread for multi-step or long-running work. Hands off to a fresh session in the new thread.
+
+**Tools are actions, not topics.** Writing "Reacted." or "Attaching the file…" does not react or attach anything — it just disappears. Only the tool call does the thing. And do not both call a tool and send a message describing it: the user sees the action and the redundant narration.
+
+Replying threads under the message that woke you automatically for the first message of a turn; pass \`in_reply_to\` when answering something else.
+
+${longWorkRules}
+
+${userCommands}
+
+${inboundFormat}`;
+
+export function buildHarnessRules(mode: ChatMode): string {
+  return mode === "tools" ? toolsHarnessRules : streamHarnessRules;
+}
 
 /**
  * Synthetic user-role prompts the harness injects via `pool.wakeUp` when a

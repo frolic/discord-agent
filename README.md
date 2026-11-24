@@ -9,6 +9,38 @@ The framework is one repo; each running bot is a separate *agent home*
 directory containing config, persona, and runtime state. Same source,
 any number of agents.
 
+Two delivery modes, set with `CHAT_MODE`: `stream` (default) streams assistant
+text straight into Discord, `tools` makes the reply a `send_message` tool call
+with `think` as the reasoning outlet. Both ship in the same binary — see
+[docs/tools.md](docs/tools.md#chat-modes-chat_mode).
+
+## Long work never blocks the conversation
+
+A turn must never become unreachable. The agent has to be able to answer while a
+build runs, and a message that arrives mid-turn has to get in. So anything slow
+runs detached:
+
+| Tool | What it does |
+|---|---|
+| `bash` | Same shell as ever — but a command still running after a ceiling (`BASH_CEILING_SECS`, default 110s) is handed to the background automatically. Below the ceiling it behaves exactly like a normal bash call. |
+| `job_start` | Start a command detached from the first moment, when you already expect it to be long. Returns immediately with a job handle. |
+| `job_status` / `job_log` / `job_kill` | Poll a job (state, exit code, log tail), read its log, stop it. |
+
+Jobs are directories under `<agent home>/jobs/<name>/` (`log`, `pid`,
+`meta.json`), so they survive the tool call, the turn, and an agent restart — a
+restarted process still sees what is running. Nothing is auto-killed: a job runs
+until it exits or someone kills it.
+
+Two more pieces keep the channel honest:
+
+- **The typing indicator spans the whole run**, tool calls included: it starts on
+  `turn_start`, re-pulses every 7s inside Discord's ~10s fade, and only clears on
+  `agent_end`. A ten-minute build looks like work in progress, with no status
+  lines to read. (`src/io/installTypingIndicator.ts`)
+- **Steering.** A message arriving mid-turn is injected between tool calls
+  (acked with 👀), so long work never makes the agent unreachable. Proven live in
+  both modes by `src/bin/async-smoke.ts`.
+
 ## Prerequisites
 
 - [Bun](https://bun.sh) ≥ 1.1 — runs the harness itself.
@@ -70,7 +102,7 @@ and self-modification, see [docs/operating.md](docs/operating.md).
 
 - [docs/goals.md](docs/goals.md) — what the bot gives a user, the feel any rebuild should preserve
 - [docs/persona.md](docs/persona.md) — `SYSTEM.md`, `AGENTS.md`, skills, writing guidance
-- [docs/tools.md](docs/tools.md) — text streaming, `attach` / `react` / `history` / `thread` / `restart_self`, interaction model, debug-channel logs
+- [docs/tools.md](docs/tools.md) — chat modes (`CHAT_MODE`), streaming, `send_message` / `edit_message` / `think` / `attach` / `react` / `history` / `thread` / `restart_self`, interaction model, debug-channel logs
 - [docs/operating.md](docs/operating.md) — agent-home layout, environment, systemd, building binaries, self-modification
 
 The agent home is also pi's `agentDir` — `settings.json`, `models.json`,
