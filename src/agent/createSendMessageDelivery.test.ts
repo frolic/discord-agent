@@ -157,6 +157,9 @@ function makeHarness(args: { replyTarget?: string } = {}): Harness {
     async attach() {
       throw new Error("not used");
     },
+    sendWatchdogNote() {
+      return Promise.resolve();
+    },
     async sendError() {},
   } satisfies DiscordSender;
 

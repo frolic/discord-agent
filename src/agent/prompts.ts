@@ -62,6 +62,17 @@ Field order goes most-stable to least-stable (user_id → message_id → created
 The cwd is a private workspace directory for this conversation; created files persist across messages in this scope.`;
 
 /**
+ * Long work, both modes. The rule it encodes: a turn must never be *unreachable*
+ * — the user can always get a word in, and silence while a tool runs is the
+ * harness's problem to fix, not the model's.
+ */
+const longWorkRules = `## Long work
+
+Never let a long command hold the conversation. Anything that may run for minutes — builds, installs, test suites, deploys, big fetches, log scans — goes through \`job_start\` (detached from the first moment) rather than \`bash\`. A \`bash\` call that runs past its ceiling hands itself off to the background automatically and returns a job handle, so the turn is never stuck on it either way.
+
+While a job runs: reply first, then poll. \`job_status\` / \`job_log\` every 15-30 seconds; no output change across two polls means read the log and decide, and \`job_kill\` is for genuinely stuck work or an explicit request, never for "it's slow". The user can reach you during all of this — a message that arrives mid-turn is steered in between tool calls, so answer it even if the job is unfinished.`;
+
+/**
  * `stream` mode: the reply IS the assistant text.
  */
 const streamHarnessRules = `# Discord delivery (harness layer)
@@ -79,6 +90,8 @@ Tools available for non-text actions:
 - Files to share → call \`attach\` (with optional short caption); long context goes in the surrounding text stream.
 
 Replies thread under the message that woke you automatically — no need to specify a target for the common case.
+
+${longWorkRules}
 
 ${userCommands}
 
@@ -115,6 +128,8 @@ Use \`think\` for the work and \`send_message\` for the result: think → check 
 **Tools are actions, not topics.** Writing "Reacted." or "Attaching the file…" does not react or attach anything — it just disappears. Only the tool call does the thing. And do not both call a tool and send a message describing it: the user sees the action and the redundant narration.
 
 Replying threads under the message that woke you automatically for the first message of a turn; pass \`in_reply_to\` when answering something else.
+
+${longWorkRules}
 
 ${userCommands}
 

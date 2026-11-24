@@ -38,7 +38,6 @@ import type { Client, Message } from "discord.js";
 import {
   createAgentSessionFromServices,
   createAgentSessionServices,
-  createBashToolDefinition,
   createEditToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
@@ -65,6 +64,10 @@ import { buildHarnessRules } from "./agent/prompts.ts";
 import { installStreamingSender } from "./agent/installStreamingSender.ts";
 import { createSendMessageDelivery } from "./agent/createSendMessageDelivery.ts";
 import type { ChatDelivery } from "./agent/chatDelivery.ts";
+import { createJobs, type Jobs } from "./agent/jobs.ts";
+import { installProgressWatchdog } from "./agent/installProgressWatchdog.ts";
+import { createJobTools } from "./tools/job.ts";
+import { createBackgroundableBashTool } from "./tools/bash.ts";
 import { installActiveTracker } from "./active/installActiveTracker.ts";
 import type { ActiveTracker } from "./active/createActiveTracker.ts";
 
@@ -132,10 +135,18 @@ function buildTools(args: {
    * already-streamed reply from.
    */
   chatDelivery: ChatDelivery | null;
+  jobs: Jobs;
 }): ToolDefinition[] {
-  const { client, channelId, workspaceDir, sender, tracker, wakeUp, chatDelivery } = args;
+  const { client, channelId, workspaceDir, sender, tracker, wakeUp, chatDelivery, jobs } = args;
   return [
-    createBashToolDefinition(workspaceDir),
+    // pi's bash, wrapped so a long command hands itself to the job runner
+    // instead of holding the turn (and the channel) hostage.
+    createBackgroundableBashTool({
+      workspaceDir,
+      jobs,
+      ceilingSeconds: config.bashCeilingSecs,
+    }),
+    ...createJobTools({ jobs, workspaceDir }),
     createReadToolDefinition(workspaceDir),
     createWriteToolDefinition(workspaceDir),
     createEditToolDefinition(workspaceDir),
@@ -288,6 +299,9 @@ export function createAgentPool(args: {
 }): AgentPool {
   const { client, tracker } = args;
   const entries = new Map<string, PoolEntry>();
+  // One job registry for the whole process: jobs are not per-channel, and a job
+  // started while answering in one channel must be pollable from another.
+  const jobs = createJobs({ rootDir: resolve(config.agentDir, "jobs") });
   // Track the last value we pushed to Discord presence so we only call
   // `setActivity` when the resolved model actually changes (re-setting the
   // same string would still hit Discord's gateway). Pi resolves the model
@@ -425,6 +439,7 @@ export function createAgentPool(args: {
       // unwrapped.
       noTools: "builtin",
       customTools: buildTools({
+        jobs,
         client,
         channelId,
         workspaceDir,
@@ -460,6 +475,14 @@ export function createAgentPool(args: {
       channelId,
     });
     installActiveTracker({ channelId, session, tracker, mode: config.chatMode });
+    // The channel must never look dead while a tool runs — the watchdog posts a
+    // note (harness-authored, so it works in both modes) once a tool passes the
+    // first threshold.
+    installProgressWatchdog({
+      session,
+      sender,
+      options: { firstNoteSeconds: config.progressNoteSecs },
+    });
 
     entries.set(channelId, entry);
     evict();

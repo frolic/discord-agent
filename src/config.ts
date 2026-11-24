@@ -17,6 +17,14 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { parseChatMode, parseChatThinkingLevel } from "./agent/chatMode.ts";
 
+/** Env knob in whole seconds; anything unparseable falls back to the default. */
+function positiveSeconds(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? process.cwd());
 
 // `DISCORD_TOKEN` isn't on this struct — discord.js auto-reads
@@ -57,6 +65,13 @@ export const config = {
   // `stream` mode. Needed for endpoints that refuse to disable reasoning — see
   // `parseChatThinkingLevel`.
   chatThinkingLevel: parseChatThinkingLevel(process.env.CHAT_THINKING_LEVEL),
+  // How long `bash` waits before handing a still-running command to the job
+  // runner. Under this, a command behaves exactly like a blocking bash call;
+  // past it, the turn is freed and the model polls the job. Unset → 110s.
+  bashCeilingSecs: positiveSeconds("BASH_CEILING_SECS", 110),
+  // How long a single tool call may run before the harness posts its own
+  // progress note to the channel. `0` disables the watchdog. Unset → 30s.
+  progressNoteSecs: positiveSeconds("TOOL_PROGRESS_NOTE_SECS", 30),
   // Harness checkout root. Its git SHA is stamped into the ready marker so
   // the supervisor can tell whether a revert to `known-good` would actually
   // change anything.

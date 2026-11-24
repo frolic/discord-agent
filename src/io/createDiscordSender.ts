@@ -97,6 +97,12 @@ export interface DiscordSender {
    * the agent loop throws outside a normal turn.
    */
   sendError(error: unknown): Promise<void>;
+  /**
+   * Post a harness-authored progress line ("still running · 45s"). Comes from
+   * the progress watchdog, not from the model, so it works in both chat modes
+   * and cannot be swallowed by a forgotten `send_message`.
+   */
+  sendWatchdogNote(args: { toolName: string; elapsedSeconds: number }): Promise<void>;
 }
 
 export function createDiscordSender(args: { client: Client; channelId: string }): DiscordSender {
@@ -115,6 +121,16 @@ export function createDiscordSender(args: { client: Client; channelId: string })
       console.error("[sender] write chain settled with error:", error),
     );
     return result;
+  }
+
+  async function sendWatchdogNote(args: {
+    toolName: string;
+    elapsedSeconds: number;
+  }): Promise<void> {
+    const minutes = Math.floor(args.elapsedSeconds / 60);
+    const elapsed =
+      minutes >= 1 ? `${minutes}m${String(args.elapsedSeconds % 60).padStart(2, "0")}s` : `${args.elapsedSeconds}s`;
+    await enqueue(() => postMessage({ content: `-# ⏳ \`${args.toolName}\` still running · ${elapsed}` }));
   }
 
   async function postMessage(args: {
@@ -233,5 +249,5 @@ export function createDiscordSender(args: { client: Client; channelId: string })
     await enqueue(() => postMessage({ content: text }));
   }
 
-  return { openStream, sendText, editText, deleteMessage, attach, sendError };
+  return { openStream, sendText, editText, deleteMessage, attach, sendError, sendWatchdogNote };
 }
