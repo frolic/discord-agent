@@ -27,3 +27,38 @@ export function parseChatMode(raw: string | undefined): ChatMode {
   if (value === "stream" || value === "tools") return value;
   throw new Error(`CHAT_MODE must be "stream" or "tools" (got "${raw}")`);
 }
+
+/** pi's thinking levels, in ascending effort. `off` means no provider reasoning. */
+export const chatThinkingLevels = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export type ChatThinkingLevel = (typeof chatThinkingLevels)[number];
+
+/**
+ * Parse `CHAT_THINKING_LEVEL`, the explicit override for the provider thinking
+ * level this harness asserts on every session.
+ *
+ * Unset means "let the mode decide": `off` in `tools` mode (`think` is the only
+ * reasoning outlet there), the configured default in `stream` mode.
+ *
+ * The override exists because reasoning-off is not universally available: some
+ * endpoints (e.g. Gemini behind OpenRouter) answer HTTP 400 "Reasoning is
+ * mandatory for this endpoint and cannot be disabled". That has to be fixable
+ * with an env change rather than a code change.
+ */
+export function parseChatThinkingLevel(raw: string | undefined): ChatThinkingLevel | null {
+  if (raw === undefined || raw.trim().length === 0) return null;
+  const value = raw.trim();
+  const match = chatThinkingLevels.find((level) => level === value);
+  if (!match) {
+    throw new Error(`CHAT_THINKING_LEVEL must be one of ${chatThinkingLevels.join(", ")} (got "${raw}")`);
+  }
+  return match;
+}

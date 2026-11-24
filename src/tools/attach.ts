@@ -14,18 +14,30 @@
 import { stat } from "node:fs/promises";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { ChatMode } from "../agent/chatMode.ts";
 import type { DiscordSender } from "../io/createDiscordSender.ts";
 
 const discordMaxAttachmentBytes = 24 * 1024 * 1024;
 
-export function createAttachTool(args: { sender: DiscordSender }) {
-  const { sender } = args;
+export function createAttachTool(args: { sender: DiscordSender; mode: ChatMode }) {
+  const { sender, mode } = args;
+  // Where prose goes depends on the mode, and a description that points at the
+  // wrong path is worse than none: in tools mode "write it as normal assistant
+  // text" would send the explanation to a log channel.
+  const prosePath =
+    mode === "tools"
+      ? "put the explanation in `send_message` and keep this tool for the file itself"
+      : "write long-form prose as normal assistant text";
+  const captionNote =
+    mode === "tools"
+      ? "Skip this for the common case where a `send_message` covers the explanation."
+      : "Skip this for the common case where streamed prose covers the explanation.";
   return defineTool({
     name: "attach",
     label: "attach files",
-    description: `Post a Discord message with file attachments (images, documents, generated artifacts). Use for sharing files only — plain text replies stream automatically as you write them. Each file path must be absolute, exist, be a regular file, and be ≤24MB. Discord allows up to 10 attachments per message.
+    description: `Post a Discord message with file attachments (images, documents, generated artifacts). Use for sharing files — for anything the user should read, ${prosePath}. Each file path must be absolute, exist, be a regular file, and be ≤24MB. Discord allows up to 10 attachments per message.
 
-Optional caption: pair a short \`content\` string with the files (≤1900 chars). For long-form prose, write it as normal assistant text — it streams to Discord on its own.`,
+Optional caption: pair a short \`content\` string with the files (≤1900 chars). ${captionNote}`,
     parameters: Type.Object({
       files: Type.Array(Type.String(), {
         description:
@@ -35,8 +47,7 @@ Optional caption: pair a short \`content\` string with the files (≤1900 chars)
       }),
       content: Type.Optional(
         Type.String({
-          description:
-            "Optional caption posted alongside the files (≤1900 chars). Skip this for the common case where streamed prose covers the explanation.",
+          description: `Optional caption posted alongside the files (≤1900 chars). ${captionNote}`,
         }),
       ),
       in_reply_to: Type.Optional(
@@ -53,7 +64,7 @@ Optional caption: pair a short \`content\` string with the files (≤1900 chars)
           content: [
             {
               type: "text",
-              text: `Rejected: caption ${captionLength} chars exceeds the 1900 char limit. Shorten the caption — long prose should stream as plain text instead.`,
+              text: `Rejected: caption ${captionLength} chars exceeds the 1900 char limit. Shorten the caption — the long text belongs in the reply, not the caption.`,
             },
           ],
           details: {

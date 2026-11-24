@@ -139,8 +139,8 @@ function buildTools(args: {
     createReadToolDefinition(workspaceDir),
     createWriteToolDefinition(workspaceDir),
     createEditToolDefinition(workspaceDir),
-    createAttachTool({ sender }),
-    createReactTool({ client, channelId }),
+    createAttachTool({ sender, mode: config.chatMode }),
+    createReactTool({ client, channelId, mode: config.chatMode }),
     createHistoryTool({ client, channelId }),
     createThreadTool({ client, channelId, wakeUp }),
     createRestartSelfTool({ client, channelId, tracker }),
@@ -165,6 +165,11 @@ function buildTools(args: {
  * gives two competing outlets — invisible thinking tokens *and* `think` — and the
  * model splits the same job between them.
  *
+ * `CHAT_THINKING_LEVEL` overrides both modes. It exists because reasoning-off is
+ * not universally available: some endpoints reject it outright
+ * ("Reasoning is mandatory for this endpoint and cannot be disabled"), and that
+ * has to be fixable with an env change rather than a code change.
+ *
  * `stream` mode asserts the configured default explicitly instead of relying on
  * the session file. pi persists a `thinking_level_change` entry, so a session
  * last used in `tools` mode would otherwise come back with reasoning off and
@@ -178,6 +183,10 @@ function applyChatModeThinkingLevel(
   session: AgentSession,
   settingsDefault: Parameters<AgentSession["setThinkingLevel"]>[0] | undefined,
 ): void {
+  if (config.chatThinkingLevel) {
+    session.setThinkingLevel(config.chatThinkingLevel);
+    return;
+  }
   if (config.chatMode === "tools") {
     session.setThinkingLevel("off");
     return;

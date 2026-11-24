@@ -30,14 +30,78 @@ allowlists, or role checks instead; the place to extend is the
 The harness re-injects it as a steer between tool batches. The agent
 finishes its current tool, then addresses your new message.
 
+## Chat modes (`CHAT_MODE`)
+
+There are two ways the agent's output reaches the user, chosen by the
+`CHAT_MODE` env var. Both live in the same binary; flipping the mode is one env
+change and a restart, which is also how you A/B them.
+
+| | `stream` (default) | `tools` |
+|---|---|---|
+| The reply | assistant text | a `send_message` tool call |
+| Reasoning | provider thinking, if the model has it | the `think` tool, provider reasoning off |
+| Texts on a tool call | fine | normal |
+| Text the model writes outside a tool call | that *is* the reply | logged to the debug channel, never delivered |
+| Extra tools | — | `send_message`, `edit_message`, `think` |
+
+**`stream`** is the original behaviour, described below: the agent writes
+markdown and the harness streams it into Discord messages, editing them as the
+text grows.
+
+**`tools`** exists for models and workloads where you want the reply to be an
+explicit act rather than a side effect of generating tokens. The model's prose
+is no longer the delivery channel — it calls `send_message(text, in_reply_to?)`,
+corrects itself with `edit_message(message_id, text)`, and thinks out loud with
+`think(thought)`, which stays in the transcript and never reaches Discord. Text
+the model writes outside a tool call is cross-posted to `DEBUG_CHANNEL_ID` (so a
+model that forgot to call the tool is visible to an operator instead of silently
+saying nothing) and never reaches the user channel.
+
+Provider reasoning is switched off in `tools` mode (`session.setThinkingLevel("off")`)
+so `think` is the only reasoning outlet — otherwise the same work gets split
+between an invisible thinking block and an explicit tool. Some endpoints refuse
+to disable reasoning outright (OpenRouter answers HTTP 400
+`Reasoning is mandatory for this endpoint and cannot be disabled` for Gemini);
+set `CHAT_THINKING_LEVEL` to override, e.g. `CHAT_THINKING_LEVEL=high`.
+
+### The typing effect in `tools` mode
+
+Tool-call arguments stream too, so the live-typing effect survives: the harness
+reads the `text` field out of the growing argument JSON
+([`../src/streaming/partialJsonStringField.ts`](../src/streaming/partialJsonStringField.ts)),
+previews it into a live message, and at `toolcall_end` replaces the preview with
+the authoritative parsed text (`replaceSource`) so a partial unescape is
+corrected in place rather than delivered. The tool then *claims* the streamed
+delivery instead of posting a second copy.
+
+In practice how visible that is depends on the provider: OpenRouter hands pi the
+whole argument object in one or two chunks for the models we run, so a
+`tools`-mode reply usually appears fully formed (no growth to watch), while
+`stream` mode — where the granularity is per-token text deltas — always shows the
+text growing. The code path is covered by
+[`../src/agent/createSendMessageDelivery.test.ts`](../src/agent/createSendMessageDelivery.test.ts).
+
+### Checking a mode for real
+
+[`../src/bin/chat-mode-smoke.ts`](../src/bin/chat-mode-smoke.ts) drives one live
+turn through the real pool in a real channel and reports what reached Discord
+(messages, edits, debug-channel lines), asserting the mode-specific expectations.
+Run it from the agent home against a channel with no live session:
+
+```bash
+CHAT_MODE=tools CHAT_SMOKE_CHANNEL_ID=123 CHAT_SMOKE_EXPECT=abc \
+  bun /path/to/discord-agent/src/bin/chat-mode-smoke.ts "reply with abc"
+```
+
 ## Tools the agent has
 
-Pi's defaults — **bash, read, write, edit** — plus five harness-specific
-ones. The trade-off in giving the agent unrestricted shell and
-filesystem access is power vs blast radius — the assumption is a
-trusted home rather than a hostile sandbox.
+Pi's defaults — **bash, read, write, edit** — plus the harness-specific ones
+below. In `tools` mode `send_message`, `edit_message` and `think` join them; in
+`stream` mode they are not registered. The trade-off in giving the agent
+unrestricted shell and filesystem access is power vs blast radius — the
+assumption is a trusted home rather than a hostile sandbox.
 
-- **Plain text streams to Discord automatically.** The agent writes
+- **Plain text streams to Discord automatically (`stream` mode).** The agent writes
   standard GFM-flavored markdown — the format any LLM naturally produces
   — and the harness translates the bits Discord can't render before
   posting: tables become ASCII-aligned code blocks, task lists become
@@ -48,7 +112,7 @@ trusted home rather than a hostile sandbox.
   Long replies split at safe top-level block boundaries (between
   paragraphs, around code blocks, between list groups, etc.). The full
   pipeline is in [`../src/streaming/prepareForDelivery.ts`](../src/streaming/prepareForDelivery.ts)
-  with seam selection in [`../src/streaming/findSafeSplit.ts`](../src/streaming/findSafeSplit.ts)
+  with seam selection in [`../src/streaming/chunkRendered.ts`](../src/streaming/chunkRendered.ts)
   and the post/edit driver in
   [`../src/streaming/createStreamingDispatcher.ts`](../src/streaming/createStreamingDispatcher.ts).
 - **`attach(files, content?, in_reply_to?)`** — post a Discord message
@@ -70,12 +134,25 @@ trusted home rather than a hostile sandbox.
   wake a fresh agent session in the new thread using `initial_message` as
   the user prompt. The calling session terminates; work continues in the
   new thread's channel.
+- **`send_message(text, in_reply_to?)`** (`tools` mode) — the reply. Chunked
+  and rendered exactly like streamed text, so a long reply is still split across
+  several Discord messages at markdown-safe boundaries. Returns the message IDs,
+  which is what makes `edit_message` possible.
+- **`edit_message(message_id, text)`** (`tools` mode) — replace the whole
+  content of a message the bot posted. Refuses rather than truncates when the
+  rendered text would exceed one Discord message, and refuses to touch other
+  people's messages.
+- **`think(thought)`** (`tools` mode) — reasoning outlet. Returns `ok`, logs a
+  truncated preview to the journal, stays in the transcript for later turns, and
+  is never posted.
 - **`restart_self(reason?)`** — exit the bot process so the supervisor
   (systemd, Docker, wrapper script) restarts with current source. Used
   after editing the framework, or as a recovery hatch. No-op if no
   supervisor is running.
 
 ## How streaming text reaches Discord
+
+(`stream` mode. `tools` mode streams tool-call arguments instead — see above.)
 
 Each text content block in an assistant message becomes its own chain of
 Discord messages. The first delta posts a message after a short debounce

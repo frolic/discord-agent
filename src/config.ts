@@ -15,7 +15,7 @@
  */
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { parseChatMode } from "./agent/chatMode.ts";
+import { parseChatMode, parseChatThinkingLevel } from "./agent/chatMode.ts";
 
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? process.cwd());
 
@@ -52,6 +52,11 @@ export const config = {
   // stay in the tree — flipping the mode is one env change plus a restart, which
   // is also how an A/B comparison is run. Throws on an unknown value.
   chatMode: parseChatMode(process.env.CHAT_MODE),
+  // Explicit override for the thinking level asserted on every session.
+  // Unset → the mode chooses: `off` in `tools` mode, the settings default in
+  // `stream` mode. Needed for endpoints that refuse to disable reasoning — see
+  // `parseChatThinkingLevel`.
+  chatThinkingLevel: parseChatThinkingLevel(process.env.CHAT_THINKING_LEVEL),
   // Harness checkout root. Its git SHA is stamped into the ready marker so
   // the supervisor can tell whether a revert to `known-good` would actually
   // change anything.

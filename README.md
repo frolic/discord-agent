@@ -9,6 +9,11 @@ The framework is one repo; each running bot is a separate *agent home*
 directory containing config, persona, and runtime state. Same source,
 any number of agents.
 
+Two delivery modes, set with `CHAT_MODE`: `stream` (default) streams assistant
+text straight into Discord, `tools` makes the reply a `send_message` tool call
+with `think` as the reasoning outlet. Both ship in the same binary — see
+[docs/tools.md](docs/tools.md#chat-modes-chat_mode).
+
 ## Prerequisites
 
 - [Bun](https://bun.sh) ≥ 1.1 — runs the harness itself.
@@ -70,7 +75,7 @@ and self-modification, see [docs/operating.md](docs/operating.md).
 
 - [docs/goals.md](docs/goals.md) — what the bot gives a user, the feel any rebuild should preserve
 - [docs/persona.md](docs/persona.md) — `SYSTEM.md`, `AGENTS.md`, skills, writing guidance
-- [docs/tools.md](docs/tools.md) — text streaming, `attach` / `react` / `history` / `thread` / `restart_self`, interaction model, debug-channel logs
+- [docs/tools.md](docs/tools.md) — chat modes (`CHAT_MODE`), streaming, `send_message` / `edit_message` / `think` / `attach` / `react` / `history` / `thread` / `restart_self`, interaction model, debug-channel logs
 - [docs/operating.md](docs/operating.md) — agent-home layout, environment, systemd, building binaries, self-modification
 
 The agent home is also pi's `agentDir` — `settings.json`, `models.json`,

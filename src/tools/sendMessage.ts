@@ -52,7 +52,7 @@ Thread under the message you are answering: pass its \`in_reply_to\`. The first 
       if (text.trim().length === 0) {
         return {
           content: [{ type: "text", text: "Rejected: text is empty. Nothing to send." }],
-          details: { messageIds: [] as string[], characters: 0, streamed: false },
+          details: { messageIds: [], characters: 0, streamed: false },
           isError: true,
           terminate: false,
         };
