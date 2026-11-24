@@ -10,6 +10,7 @@ import { config } from "./config.ts";
 import { installRouter } from "./installRouter.ts";
 import { createAgentPool } from "./createAgentPool.ts";
 import { createActiveTracker } from "./active/createActiveTracker.ts";
+import { startLivenessBeacon } from "./active/livenessBeacon.ts";
 import { recoverActive } from "./active/recoverActive.ts";
 import { postDebugLine } from "./io/postDebugLine.ts";
 
@@ -30,14 +31,27 @@ const tracker = createActiveTracker({ activeStateFile: resolve(config.agentDir, 
 const pool = createAgentPool({ client, tracker });
 installRouter({ client, pool, tracker });
 
+// Start beating before login: "the process exists" is true from here on, and
+// the supervisor outside this repo uses that as its first health signal. The
+// ready marker waits for an actual Discord connection.
+const liveness = startLivenessBeacon({
+  dir: config.livenessDir,
+  harnessDir: config.harnessDir,
+});
+
 client.once("clientReady", async (readyClient) => {
   console.log(`discord-agent online as ${readyClient.user.tag} — agentDir: ${config.agentDir}`);
+  // The pool is constructed above, so "connected + pool bound" is exactly
+  // now. Mark ready before any outbound work (debug post, recovery wakes)
+  // so a slow or failing Discord call can't delay the liveness proof.
+  liveness.markReady();
   await postDebugLine({ client, content: "-# 🟢 online" });
   await recoverActive({ pool, tracker });
 });
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`${signal} received, shutting down`);
+  liveness.stop();
   // Best-effort post — don't block exit if the channel is unreachable
   // or discord.js is mid-teardown. The post races against client.destroy()
   // below; whichever wins, the process still exits.
