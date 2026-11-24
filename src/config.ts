@@ -13,6 +13,7 @@
  * for the full list of pi-side knobs (model defaults, compaction, retry,
  * skill paths, etc.) — none of those need our env vars.
  */
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR ?? process.cwd());
@@ -39,4 +40,13 @@ export const config = {
   // this also redirects the WebSocket gateway, since discord.js fetches
   // the gateway URL from the REST API. Default unset (use discord.com).
   discordApiUrl: process.env.DISCORD_API_URL || null,
+  // Liveness beacon (see `src/active/livenessBeacon.ts`). `heartbeat` and
+  // `ready` are written into `livenessDir`; an out-of-band supervisor reads
+  // them and reverts this checkout if they stop arriving. Keep the default
+  // in sync with `/usr/local/sbin/pollux-deadmans-switch.sh`.
+  livenessDir: resolve(process.env.LIVENESS_DIR ?? resolve(homedir(), ".pollux")),
+  // Harness checkout root. Its git SHA is stamped into the ready marker so
+  // the supervisor can tell whether a revert to `known-good` would actually
+  // change anything.
+  harnessDir: resolve(process.env.HARNESS_DIR ?? resolve(import.meta.dir, "..")),
 } as const;
