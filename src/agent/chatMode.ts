@@ -8,8 +8,9 @@
  * - `tools`: assistant text goes *nowhere the user can see* (the harness posts it
  *   to the debug channel so a misbehaving model is visible to an operator).
  *   Replies happen exclusively through `send_message`, corrections through
- *   `edit_message`, and reasoning through `think`. Provider reasoning is turned
- *   off so `think` is the only reasoning outlet.
+ *   `edit_message`, and reasoning through `think` (which is never delivered).
+ *   Provider reasoning stays at the configured default — turning it off was
+ *   measured and it cost replies outright (see `docs/tools.md`).
  *
  * Both paths stay in the tree: the mode is an env flag so one restart flips it,
  * and an A/B comparison is a restart each way.
@@ -45,13 +46,16 @@ export type ChatThinkingLevel = (typeof chatThinkingLevels)[number];
  * Parse `CHAT_THINKING_LEVEL`, the explicit override for the provider thinking
  * level this harness asserts on every session.
  *
- * Unset means "let the mode decide": `off` in `tools` mode (`think` is the only
- * reasoning outlet there), the configured default in `stream` mode.
+ * Unset means "use the configured default", in both modes. `tools` mode used to
+ * force `off` on the theory that `think` was the only reasoning outlet worth
+ * paying for; an A/B over the same prompt set showed the opposite — with
+ * reasoning off, half the replies were never delivered at all (the model wrote
+ * "Sent." as prose instead of calling `send_message`) and the answers that did
+ * arrive were shallower. See `docs/tools.md` for the numbers.
  *
- * The override exists because reasoning-off is not universally available: some
- * endpoints (e.g. Gemini behind OpenRouter) answer HTTP 400 "Reasoning is
- * mandatory for this endpoint and cannot be disabled". That has to be fixable
- * with an env change rather than a code change.
+ * The override remains for the opposite reason: some endpoints (e.g. Gemini via
+ * OpenRouter) answer HTTP 400 "Reasoning is mandatory for this endpoint and
+ * cannot be disabled", which has to be fixable with an env change.
  */
 export function parseChatThinkingLevel(raw: string | undefined): ChatThinkingLevel | null {
   if (raw === undefined || raw.trim().length === 0) return null;

@@ -197,10 +197,9 @@ function applyChatModeThinkingLevel(
     session.setThinkingLevel(config.chatThinkingLevel);
     return;
   }
-  if (config.chatMode === "tools") {
-    session.setThinkingLevel("off");
-    return;
-  }
+  // Both modes: the configured default. `tools` mode used to force `off`; an A/B
+  // showed that cost replies (see `agent/chatMode.ts`), so the mode no longer
+  // has an opinion about reasoning depth.
   if (settingsDefault) session.setThinkingLevel(settingsDefault);
 }
 
