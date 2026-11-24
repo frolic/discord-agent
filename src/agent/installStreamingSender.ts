@@ -64,9 +64,13 @@ export function installStreamingSender(args: {
 }): void {
   const { session, sender, getReplyTarget, mode, client, channelId, chatDelivery } = args;
 
-  // One rejection per run: after the abort, the remaining text blocks of the
-  // same run are consequences of the same mistake, not new ones.
-  let rejectedThisRun = false;
+  // How many times this run has been caught writing prose instead of replying.
+  // Reset whenever something actually gets delivered, so a model that behaves
+  // for a while gets its retry budget back.
+  let strayCount = 0;
+  // The last rejected body, in case the retry also fails and the answer would
+  // otherwise be lost.
+  let lastRejectedText = "";
 
   /**
    * Tools-mode prose. Two very different situations share one event stream:
@@ -79,30 +83,63 @@ export function installStreamingSender(args: {
   async function handleStrayText(text: string): Promise<void> {
     const body =
       text.length > strayTextLimit ? `${text.slice(0, strayTextLimit)}… (truncated)` : text;
+
+    // Answered and *then* narrated ("Sent.", a reworded second draft). Nothing to
+    // recover — log it and leave the turn alone.
     if (chatDelivery?.deliveredThisRun() === true) {
+      strayCount = 0;
       await postDebugLine({
         client,
         content: `-# 💬 tools-mode chatter after delivery in <#${channelId}> — logged, not delivered\n${body}`,
       });
       return;
     }
+
+    lastRejectedText = text;
+    strayCount += 1;
     await postDebugLine({
       client,
-      content: `-# 💬 REJECTED tools-mode prose in <#${channelId}> — turn aborted, nothing was delivered\n${body}`,
+      content: `-# 💬 REJECTED tools-mode prose in <#${channelId}> — nothing was delivered (attempt ${strayCount})\n${body}`,
     });
-    if (rejectedThisRun) return;
-    rejectedThisRun = true;
-    await sender
-      .sendText({
-        text: `-# ⚠️ reply rejected — assistant prose is not delivered in this mode. Use \`send_message\`.`,
-      })
-      .catch((error) => console.error("[stream] reject notice failed:", error));
-    // Abort the run: the model answered in the wrong channel, so the turn has
-    // already failed. Letting it continue produces more undelivered prose and a
-    // transcript that looks like a successful reply.
-    await session
-      .abort()
-      .catch((error) => console.error("[stream] abort after stray text failed:", error));
+
+    // Nothing reached the user. Refusing the behaviour must not cost the answer,
+    // so: abort, then make the model deliver the same reply through the tool.
+    // No notice in the channel — the user should just get their answer.
+    if (strayCount === 1) {
+      retryDelivery();
+      return;
+    }
+
+    // The retry produced prose too. Deliver what it wrote rather than losing the
+    // answer; the debug channel already records that this was a fallback.
+    await sender.sendText({ text: lastRejectedText }).catch((error) =>
+      console.error("[stream] fallback delivery failed:", error),
+    );
+    await postDebugLine({
+      client,
+      content: `-# ⚠️ tools-mode retry failed in <#${channelId}> — delivered the prose unchanged`,
+    });
+  }
+
+  /**
+   * Abort the failed turn and ask the model for the same reply, this time through
+   * `send_message`. Deferred out of the event handler: aborting and re-prompting
+   * from inside a `message_update` callback re-enters the session mid-event.
+   */
+  function retryDelivery(): void {
+    setTimeout(() => {
+      void (async () => {
+        await session
+          .abort()
+          .catch((error) => console.error("[stream] abort before retry failed:", error));
+        await session
+          .prompt(
+            "HARNESS: the previous turn was aborted. You wrote the reply as assistant prose, which this mode does not deliver, so the user saw nothing. " +
+              "Deliver that reply now by calling send_message with it. Do not write it as prose, do not summarise it, and do not comment on this instruction.",
+          )
+          .catch((error) => console.error("[stream] retry prompt failed:", error));
+      })();
+    }, 0);
   }
 
   let currentDispatcher: StreamingDispatcher | null = null;
@@ -137,7 +174,6 @@ export function installStreamingSender(args: {
   session.subscribe((event) => {
     if (event.type === "agent_start") {
       isFirstTextOfRun = true;
-      rejectedThisRun = false;
       chatDelivery?.resetDelivered();
       return;
     }

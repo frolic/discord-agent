@@ -60,6 +60,7 @@ import { createThinkTool } from "./tools/think.ts";
 import { collectImageAttachments } from "./collectImageAttachments.ts";
 import { formatMessage } from "./formatMessage.ts";
 import { buildPromptOptions } from "./agent/buildPromptOptions.ts";
+import { withDeliveryHint } from "./agent/deliveryHint.ts";
 import { buildHarnessRules } from "./agent/prompts.ts";
 import { installStreamingSender } from "./agent/installStreamingSender.ts";
 import { createSendMessageDelivery } from "./agent/createSendMessageDelivery.ts";
@@ -511,7 +512,13 @@ export function createAgentPool(args: {
     // time the pool handles messages — login completes before the router
     // wires up — so a missing `client.user` here is a bug worth crashing on.
     if (!client.user) throw new Error("client.user not set — login did not complete");
-    const formattedPrompt = formatMessage(message, client.user.id);
+    // The delivery rule rides along with every inbound message: by the time a
+    // long session is deep in, the system prompt rule is far away and the newest
+    // message is right here.
+    const formattedPrompt = withDeliveryHint(
+      formatMessage(message, client.user.id),
+      config.chatMode,
+    );
 
     if (isBusy) {
       // Steering: a turn is in flight → inject this as a steer. Ack with
