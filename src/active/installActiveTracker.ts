@@ -12,6 +12,7 @@
  * rewriting this one file.
  */
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { ChatMode } from "../agent/chatMode.ts";
 import { deliveryToolNameSet } from "../agent/deliveryTools.ts";
 import type { ActiveTracker } from "./createActiveTracker.ts";
 
@@ -19,8 +20,10 @@ export function installActiveTracker(args: {
   channelId: string;
   session: AgentSession;
   tracker: ActiveTracker;
+  /** Which delivery path counts as "the user saw something" — see `agent/chatMode.ts`. */
+  mode: ChatMode;
 }): void {
-  const { channelId, session, tracker } = args;
+  const { channelId, session, tracker, mode } = args;
   session.subscribe((event) => {
     if (event.type === "tool_execution_start") {
       tracker.markInTool(channelId, true);
@@ -39,7 +42,12 @@ export function installActiveTracker(args: {
       // pending-state tracking. We mark on text_end so a turn that ends
       // mid-stream (aborted, errored before the block closed) doesn't
       // falsely register as delivered.
-      if (ame.type === "text_end" && ame.content.length > 0) {
+      //
+      // In `tools` mode text is NOT delivery — it is logged and thrown away —
+      // so marking here would clear `pending` for a turn the user never saw, and
+      // a crash after it would not wake the channel. `send_message` (in
+      // `deliveryToolNameSet`) is what clears the flag in that mode.
+      if (mode === "stream" && ame.type === "text_end" && ame.content.length > 0) {
         tracker.markFulfilled(channelId);
       }
     }

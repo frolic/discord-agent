@@ -459,7 +459,7 @@ export function createAgentPool(args: {
       client,
       channelId,
     });
-    installActiveTracker({ channelId, session, tracker });
+    installActiveTracker({ channelId, session, tracker, mode: config.chatMode });
 
     entries.set(channelId, entry);
     evict();
